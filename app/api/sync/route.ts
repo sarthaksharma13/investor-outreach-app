@@ -123,74 +123,112 @@ async function fetchRecentEmails(accessToken: string) {
 
   const gmail = google.gmail({ version: "v1", auth });
 
-  // Very tight queries — only direct 1-to-1 fundraising emails
-  // -unsubscribe filters out virtually all newsletters/marketing
-  const queries = [
-    // Emails Sarthak SENT to investors
-    'newer_than:30d in:sent (subject:(pitch deck) OR subject:(fundraise) OR subject:(intro) OR subject:(investment))',
-    // Direct replies in threads (has Re:, no unsubscribe, no promos)
-    'newer_than:30d subject:re: -category:promotions -category:social -unsubscribe -"view in browser" -"email preferences"',
-    // Specific accelerator confirmations (personal, not blasts)
-    'newer_than:30d -category:promotions -unsubscribe (subject:("your application" OR "we received your" OR "thank you for applying" OR "application confirmed"))',
-    // Rejections addressed personally
-    'newer_than:30d -category:promotions -unsubscribe (subject:("not selected" OR "not moving forward" OR "passing on" OR "decided not to"))',
+  // STEP 1: Find emails Sarthak SENT related to fundraising
+  const sentQueries = [
+    'newer_than:30d in:sent (pitch OR deck OR fundraise OR investment OR intro OR application)',
+    'newer_than:30d in:sent (accelerator OR incubator OR "apply" OR "our startup")',
   ];
 
+  const sentThreadIds = new Set<string>();
   const allMessages: { subject: string; snippet: string; from: string; date: string; type: string; id: string }[] = [];
   const seenIds = new Set<string>();
 
-  for (const q of queries) {
+  // Collect thread IDs from sent emails
+  for (const q of sentQueries) {
     try {
-      const list = await gmail.users.messages.list({
-        userId: "me",
-        q,
-        maxResults: 30,
-      });
-
+      const list = await gmail.users.messages.list({ userId: "me", q, maxResults: 40 });
       for (const msg of list.data.messages || []) {
         if (seenIds.has(msg.id!)) continue;
         seenIds.add(msg.id!);
 
         const full = await gmail.users.messages.get({
-          userId: "me",
-          id: msg.id!,
-          format: "metadata",
+          userId: "me", id: msg.id!, format: "metadata",
           metadataHeaders: ["Subject", "From", "To", "Date"],
         });
 
+        sentThreadIds.add(full.data.threadId!);
+
         const headers = full.data.payload?.headers || [];
-        const subject = headers.find((h) => h.name === "Subject")?.value || "";
-        const from = headers.find((h) => h.name === "From")?.value || "";
-        const to = headers.find((h) => h.name === "To")?.value || "";
-        const date = headers.find((h) => h.name === "Date")?.value || "";
-
-        // Skip newsletters — check snippet for telltale signs
-        const snippet = full.data.snippet || "";
-        const lowerSnippet = snippet.toLowerCase();
-        const lowerSubject = subject.toLowerCase();
-        const isNewsletter =
-          lowerSnippet.includes("unsubscribe") ||
-          lowerSnippet.includes("view in browser") ||
-          lowerSnippet.includes("email preferences") ||
-          lowerSnippet.includes("manage your subscription") ||
-          lowerSnippet.includes("you are receiving this") ||
-          lowerSubject.includes("newsletter") ||
-          lowerSubject.includes("digest") ||
-          lowerSubject.includes("weekly roundup");
-
-        if (isNewsletter) continue;
-
         allMessages.push({
-          subject,
-          snippet,
-          from: `From: ${from} | To: ${to}`,
-          date,
+          subject: headers.find((h) => h.name === "Subject")?.value || "",
+          snippet: full.data.snippet || "",
+          from: `From: ${headers.find((h) => h.name === "From")?.value || ""} | To: ${headers.find((h) => h.name === "To")?.value || ""}`,
+          date: headers.find((h) => h.name === "Date")?.value || "",
           type: "email",
           id: msg.id!,
         });
       }
     } catch (error) {
-      console.error("Gmail query error:", error);
+      console.error("Gmail sent query error:", error);
+    }
+  }
+
+  // STEP 2: Find replies in those threads (responses from investors)
+  for (const threadId of sentThreadIds) {
+    try {
+      const thread = await gmail.users.threads.get({
+        userId: "me", id: threadId, format: "metadata",
+        metadataHeaders: ["Subject", "From", "To", "Date"],
+      });
+
+      for (const msg of thread.data.messages || []) {
+        if (seenIds.has(msg.id!)) continue;
+        seenIds.add(msg.id!);
+
+        const headers = msg.payload?.headers || [];
+        const from = headers.find((h) => h.name === "From")?.value || "";
+
+        // Skip our own messages (already captured above)
+        if (from.toLowerCase().includes("sarthak") || from.toLowerCase().includes("influencergarage")) continue;
+
+        allMessages.push({
+          subject: headers.find((h) => h.name === "Subject")?.value || "",
+          snippet: msg.snippet || "",
+          from: `From: ${from} | To: ${headers.find((h) => h.name === "To")?.value || ""}`,
+          date: headers.find((h) => h.name === "Date")?.value || "",
+          type: "email",
+          id: msg.id!,
+        });
+      }
+    } catch (error) {
+      console.error("Thread fetch error:", error);
+    }
+  }
+
+  // STEP 3: Personal accelerator confirmations & rejections (not from threads we initiated)
+  const directQueries = [
+    'newer_than:30d -category:promotions -category:social to:me (subject:("your application" OR "we received your" OR "thank you for applying") -subject:re:)',
+    'newer_than:30d -category:promotions -category:social to:me (subject:("not selected" OR "not moving forward" OR "passing on" OR "decided not to") -subject:re:)',
+  ];
+
+  for (const q of directQueries) {
+    try {
+      const list = await gmail.users.messages.list({ userId: "me", q, maxResults: 20 });
+      for (const msg of list.data.messages || []) {
+        if (seenIds.has(msg.id!)) continue;
+        seenIds.add(msg.id!);
+
+        const full = await gmail.users.messages.get({
+          userId: "me", id: msg.id!, format: "metadata",
+          metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe"],
+        });
+
+        const headers = full.data.payload?.headers || [];
+
+        // Hard skip if List-Unsubscribe header exists — it's a mailing list
+        if (headers.find((h) => h.name === "List-Unsubscribe")) continue;
+
+        allMessages.push({
+          subject: headers.find((h) => h.name === "Subject")?.value || "",
+          snippet: full.data.snippet || "",
+          from: `From: ${headers.find((h) => h.name === "From")?.value || ""} | To: ${headers.find((h) => h.name === "To")?.value || ""}`,
+          date: headers.find((h) => h.name === "Date")?.value || "",
+          type: "email",
+          id: msg.id!,
+        });
+      }
+    } catch (error) {
+      console.error("Gmail direct query error:", error);
     }
   }
 
