@@ -2,119 +2,117 @@
 
 import { useSession, signOut } from "next-auth/react";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Outreach, Settings } from "@/lib/types";
+import { CompanyOutreach, Settings } from "@/lib/types";
 
-const STORAGE_KEY = "outreach-tracker-v2";
+const STORAGE_KEY = "outreach-tracker-v3";
 const SETTINGS_KEY = "outreach-settings-v2";
 const LAST_SYNC_KEY = "outreach-last-sync";
-const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-function makeTodo(investor: string, company: string, priority: "high" | "moderate" | "low", stage: string[] = ["seed"]): Outreach {
+function normalizeCompanyKey(name: string): string {
+  return name.toLowerCase().split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 0).sort().join("|");
+}
+
+function makeTodo(company: string, priority: "high" | "moderate" | "low", stage: string = "seed"): CompanyOutreach {
   return {
     id: Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    investor,
-    company,
-    stage,
-    contactMethod: [],
-    status: ["todo"],
-    outreachDate: "",
-    followupDate: "",
-    notes: "",
-    dateAdded: "2026-03-19",
-    source: "manual",
-    priority,
+    company, companyKey: normalizeCompanyKey(company), contacts: [],
+    stage, status: "todo", sources: ["manual"], sourceIds: [], emailLinks: [],
+    threadCount: 0, outreachDate: "", followupDate: "", notes: "", dateAdded: "2026-03-19", priority,
   };
 }
 
-const SEED_DATA: Outreach[] = [
-  // Existing outreaches
+const SEED_DATA: CompanyOutreach[] = [
   {
-    id: "ml3ts1i1z0g0appubob", investor: "Sonic", company: "Chiratae", stage: ["seed"],
-    contactMethod: ["other"], status: ["ongoing"], outreachDate: "2026-02-01",
-    followupDate: "2026-02-05", notes: "Submitted sonic form", dateAdded: "2026-02-01", source: "manual",
+    id: "ml3ts1i1z0g0appubob", company: "Chiratae", companyKey: "chiratae",
+    contacts: [{ name: "Sonic" }], stage: "seed", status: "ongoing",
+    sources: ["manual"], sourceIds: [], emailLinks: [], threadCount: 1,
+    outreachDate: "2026-02-01", followupDate: "2026-02-05",
+    notes: "Submitted sonic form", dateAdded: "2026-02-01",
   },
   {
-    id: "ml3tsjtb3na7p2zd2dk", investor: "Thomas", company: "", stage: ["angel"],
-    contactMethod: ["other"], status: ["ongoing"], outreachDate: "2026-02-01",
-    followupDate: "2026-02-04", notes: "Met in person, follow up", dateAdded: "2026-02-01", source: "manual",
+    id: "ml3tsjtb3na7p2zd2dk", company: "Angel", companyKey: "angel",
+    contacts: [{ name: "Thomas" }], stage: "angel", status: "ongoing",
+    sources: ["manual"], sourceIds: [], emailLinks: [], threadCount: 1,
+    outreachDate: "2026-02-01", followupDate: "2026-02-04",
+    notes: "Met in person, follow up", dateAdded: "2026-02-01",
   },
   {
-    id: "ml3tuel4u3igjdejobi", investor: "Nitesh", company: "", stage: ["angel"],
-    contactMethod: ["warm-intro"], status: [], outreachDate: "2026-01-31",
-    followupDate: "2026-02-05", notes: "Ping him with a note, deck - or in person meeting", dateAdded: "2026-02-01", source: "manual",
+    id: "ml3tuel4u3igjdejobi", company: "Angel", companyKey: "angel",
+    contacts: [{ name: "Nitesh" }], stage: "angel", status: "ongoing",
+    sources: ["manual"], sourceIds: [], emailLinks: [], threadCount: 0,
+    outreachDate: "2026-01-31", followupDate: "2026-02-05",
+    notes: "Ping him with a note, deck - or in person meeting", dateAdded: "2026-02-01",
   },
-  // High confidence targets
-  makeTodo("Y Combinator", "Y Combinator", "high", ["accelerator"]),
-  makeTodo("a16z", "Andreessen Horowitz", "high", ["seed"]),
-  makeTodo("Sequoia Capital", "Sequoia Capital", "high", ["seed"]),
-  makeTodo("LDV Capital", "LDV Capital", "high", ["seed"]),
-  makeTodo("DCVC", "Data Collective", "high", ["seed"]),
-  makeTodo("F2 Venture Capital", "F2 Venture Capital", "high", ["seed"]),
-  makeTodo("Fly Ventures", "Fly Ventures", "high", ["seed"]),
-  makeTodo("Founders Fund", "Founders Fund", "high", ["seed"]),
-  makeTodo("DTC", "DTC", "high", ["seed"]),
-  // Moderate confidence targets
-  makeTodo("Bloomberg Beta", "Bloomberg Beta", "moderate", ["seed"]),
-  makeTodo("Breyer Capital", "Breyer Capital", "moderate", ["seed"]),
-  makeTodo("In-Q-Tel", "In-Q-Tel", "moderate", ["seed"]),
-  makeTodo("M12", "Microsoft Ventures", "moderate", ["seed"]),
-  makeTodo("NVIDIA NVentures", "NVIDIA NVentures", "moderate", ["seed"]),
-  makeTodo("Qualcomm Ventures", "Qualcomm Ventures", "moderate", ["seed"]),
-  makeTodo("Pi Ventures", "Pi Ventures", "moderate", ["seed"]),
-  makeTodo("Radical Ventures", "Radical Ventures", "moderate", ["seed"]),
-  makeTodo("Air Street Capital", "Air Street Capital", "moderate", ["seed"]),
-  makeTodo("Lux Capital", "Lux Capital", "moderate", ["seed"]),
-  makeTodo("Playground Global", "Playground Global", "moderate", ["seed"]),
-  // Lower confidence targets
+  makeTodo("Y Combinator", "high", "accelerator"),
+  makeTodo("Andreessen Horowitz", "high"), makeTodo("Sequoia Capital", "high"),
+  makeTodo("LDV Capital", "high"), makeTodo("Data Collective", "high"),
+  makeTodo("F2 Venture Capital", "high"), makeTodo("Fly Ventures", "high"),
+  makeTodo("Founders Fund", "high"), makeTodo("DTC", "high"),
+  makeTodo("Bloomberg Beta", "moderate"), makeTodo("Breyer Capital", "moderate"),
+  makeTodo("In-Q-Tel", "moderate"), makeTodo("Microsoft Ventures", "moderate"),
+  makeTodo("NVIDIA NVentures", "moderate"), makeTodo("Qualcomm Ventures", "moderate"),
+  makeTodo("Pi Ventures", "moderate"), makeTodo("Radical Ventures", "moderate"),
+  makeTodo("Air Street Capital", "moderate"), makeTodo("Lux Capital", "moderate"),
+  makeTodo("Playground Global", "moderate"),
   ...["Khosla Ventures", "Bessemer", "Coatue", "General Catalyst", "Greylock", "Madrona",
     "Felicis", "Wing VC", "Amplify Partners", "Theory Ventures", "Gradient Ventures",
-    "Samsung Next", "Intel Capital"].map((name) => makeTodo(name, name, "low", ["seed"])),
+    "Samsung Next", "Intel Capital"].map((name) => makeTodo(name, "low")),
 ];
 
-function getToday() {
-  return new Date().toISOString().split("T")[0];
+function getToday() { return new Date().toISOString().split("T")[0]; }
+function getWeekStart() { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return d.toISOString().split("T")[0]; }
+
+interface OldOutreach {
+  id: string; investor: string; company: string; stage: string[]; contactMethod: string[];
+  status: string[]; outreachDate: string; followupDate: string; notes: string; dateAdded: string;
+  source: string; sources?: string[]; sourceId?: string; emailLink?: string; emailLinks?: string[];
+  threadCount?: number; priority?: "high" | "moderate" | "low";
 }
 
-function getWeekStart() {
-  const d = new Date();
-  d.setDate(d.getDate() - d.getDay());
-  return d.toISOString().split("T")[0];
+function migrateV2ToV3(old: OldOutreach[]): CompanyOutreach[] {
+  return old.map((o) => ({
+    id: o.id, company: o.company || o.investor, companyKey: normalizeCompanyKey(o.company || o.investor),
+    contacts: o.investor ? [{ name: o.investor }] : [],
+    stage: Array.isArray(o.stage) ? (o.stage[0] || "seed") : (typeof o.stage === "string" ? o.stage : "seed"),
+    status: Array.isArray(o.status) ? (o.status[0] || "todo") : (typeof o.status === "string" ? o.status : "todo"),
+    sources: o.sources || [o.source || "manual"], sourceIds: o.sourceId ? [o.sourceId] : [],
+    emailLinks: o.emailLinks || (o.emailLink ? [o.emailLink] : []), threadCount: o.threadCount || 0,
+    priority: o.priority, notes: o.notes || "", outreachDate: o.outreachDate || "",
+    followupDate: o.followupDate || "", dateAdded: o.dateAdded || getToday(),
+  }));
 }
 
-function loadOutreaches(): Outreach[] {
+function loadOutreaches(): CompanyOutreach[] {
   if (typeof window === "undefined") return [];
-  const data = localStorage.getItem(STORAGE_KEY);
-  if (!data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_DATA));
-    return SEED_DATA;
+  const v3Data = localStorage.getItem(STORAGE_KEY);
+  if (v3Data) return JSON.parse(v3Data);
+  const v2Data = localStorage.getItem("outreach-tracker-v2");
+  if (v2Data) {
+    try {
+      const old = JSON.parse(v2Data);
+      if (Array.isArray(old) && old.length > 0 && "investor" in old[0]) {
+        const migrated = migrateV2ToV3(old);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+        return migrated;
+      }
+    } catch { /* ignore */ }
   }
-  return JSON.parse(data);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_DATA));
+  return SEED_DATA;
 }
 
-function saveOutreaches(outreaches: Outreach[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(outreaches));
-}
-
+function saveOutreaches(o: CompanyOutreach[]) { localStorage.setItem(STORAGE_KEY, JSON.stringify(o)); }
 function loadSettings(): Settings {
   if (typeof window === "undefined") return { dailyTarget: 5, weeklyTarget: 25 };
-  const data = localStorage.getItem(SETTINGS_KEY);
-  return data ? JSON.parse(data) : { dailyTarget: 5, weeklyTarget: 25 };
+  const d = localStorage.getItem(SETTINGS_KEY);
+  return d ? JSON.parse(d) : { dailyTarget: 5, weeklyTarget: 25 };
 }
-
-function saveSettings(settings: Settings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-}
-
-const SOURCE_ICONS: Record<string, { icon: string; label: string; color: string }> = {
-  manual: { icon: "✏️", label: "Manual", color: "border-l-slate-400" },
-  email: { icon: "📧", label: "Email", color: "border-l-violet-400" },
-  calendar: { icon: "📅", label: "Calendar", color: "border-l-teal-400" },
-  accelerator: { icon: "📋", label: "Form", color: "border-l-amber-400" },
-};
+function saveSettings(s: Settings) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
 
 const STAGE_COLORS: Record<string, string> = {
-  angel: "bg-violet-50 text-violet-600 border border-violet-200",
-  seed: "bg-teal-50 text-teal-600 border border-teal-200",
+  angel: "bg-purple-50 text-purple-600 border border-purple-200",
+  seed: "bg-emerald-50 text-emerald-600 border border-emerald-200",
   "series-a": "bg-blue-50 text-blue-600 border border-blue-200",
   "series-b": "bg-indigo-50 text-indigo-600 border border-indigo-200",
   accelerator: "bg-amber-50 text-amber-600 border border-amber-200",
@@ -130,22 +128,29 @@ const STATUS_COLORS: Record<string, string> = {
 const PRIORITY_COLORS: Record<string, string> = {
   high: "bg-rose-50 text-rose-600 border border-rose-200",
   moderate: "bg-amber-50 text-amber-600 border border-amber-200",
-  low: "bg-slate-50 text-slate-500 border border-slate-200",
+  low: "bg-gray-50 text-gray-500 border border-gray-200",
 };
 
-const STAT_ACCENTS = [
-  "border-l-violet-400",
-  "border-l-teal-400",
-  "border-l-sky-400",
-  "border-l-amber-400",
-  "border-l-purple-400",
-  "border-l-cyan-400",
-  "border-l-orange-400",
-];
+const SOURCE_ICONS: Record<string, { icon: string; label: string }> = {
+  manual: { icon: "✏️", label: "Manual" },
+  email: { icon: "📧", label: "Email" },
+  calendar: { icon: "📅", label: "Calendar" },
+  accelerator: { icon: "📋", label: "Form" },
+};
+
+type View = "dashboard" | "todo" | "followups" | "ongoing" | "holdoff" | "rejected" | "settings";
+
+interface QuickNote {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+const NOTES_KEY = "outreach-quicknotes";
 
 export default function Dashboard() {
   const { data: session } = useSession();
-  const [outreaches, setOutreaches] = useState<Outreach[]>([]);
+  const [outreaches, setOutreaches] = useState<CompanyOutreach[]>([]);
   const [settings, setSettingsState] = useState<Settings>({ dailyTarget: 5, weeklyTarget: 25 });
   const [search, setSearch] = useState("");
   const [filterStage, setFilterStage] = useState("");
@@ -156,30 +161,29 @@ export default function Dashboard() {
   const [syncMessage, setSyncMessage] = useState("");
   const [lastSynced, setLastSynced] = useState<string>("");
   const [showModal, setShowModal] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkPriority, setBulkPriority] = useState<"high" | "moderate" | "low">("high");
   const [editId, setEditId] = useState<string | null>(null);
+  const [view, setView] = useState<View>("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [form, setForm] = useState({
-    investor: "",
-    company: "",
-    stage: [] as string[],
-    contactMethod: [] as string[],
-    status: [] as string[],
-    outreachDate: getToday(),
-    followupDate: "",
-    notes: "",
+    company: "", contacts: "", stage: "", status: "",
+    outreachDate: getToday(), followupDate: "", notes: "",
   });
+  const [quickNotes, setQuickNotes] = useState<QuickNote[]>([]);
+  const [noteInput, setNoteInput] = useState("");
 
   useEffect(() => {
     setOutreaches(loadOutreaches());
     setSettingsState(loadSettings());
     const ls = localStorage.getItem(LAST_SYNC_KEY);
     if (ls) setLastSynced(new Date(parseInt(ls)).toLocaleString());
+    const saved = localStorage.getItem(NOTES_KEY);
+    if (saved) setQuickNotes(JSON.parse(saved));
   }, []);
 
-  // Auto-sync every 24 hours
   const handleSyncRef = useCallback(async () => {
     if (syncing) return;
     await handleSync();
@@ -190,745 +194,728 @@ export default function Dashboard() {
   useEffect(() => {
     const lastSync = parseInt(localStorage.getItem(LAST_SYNC_KEY) || "0");
     const timeSinceSync = Date.now() - lastSync;
-
-    // Auto-sync on first load if never synced, or if 24h have passed
     if (lastSync === 0 || timeSinceSync >= SYNC_INTERVAL_MS) {
-      const timer = setTimeout(() => handleSyncRef(), 2000); // slight delay after mount
+      const timer = setTimeout(() => handleSyncRef(), 2000);
       return () => clearTimeout(timer);
     }
-
-    // Schedule next sync for when 24h will have passed
     const nextSyncIn = SYNC_INTERVAL_MS - timeSinceSync;
     const timer = setTimeout(() => handleSyncRef(), nextSyncIn);
     return () => clearTimeout(timer);
   }, [handleSyncRef]);
 
-  const persist = useCallback((updated: Outreach[]) => {
+  const persist = useCallback((updated: CompanyOutreach[]) => {
     setOutreaches(updated);
     saveOutreaches(updated);
   }, []);
 
-  // Stats
   const today = getToday();
   const weekStart = getWeekStart();
   const todayCount = outreaches.filter((o) => o.dateAdded === today).length;
   const weekCount = outreaches.filter((o) => o.dateAdded >= weekStart).length;
   const totalDays = new Set(outreaches.map((o) => o.dateAdded)).size;
   const avgDaily = totalDays > 0 ? (outreaches.length / totalDays).toFixed(1) : "0";
+  const emailCount = outreaches.filter((o) => o.sources.includes("email")).length;
+  const calendarCount = outreaches.filter((o) => o.sources.includes("calendar")).length;
+  const acceleratorCount = outreaches.filter((o) => o.sources.includes("accelerator")).length;
 
-  // Source breakdown
-  const emailCount = outreaches.filter((o) => o.source === "email").length;
-  const calendarCount = outreaches.filter((o) => o.source === "calendar").length;
-  const acceleratorCount = outreaches.filter((o) => o.source === "accelerator").length;
-
-  // Follow-up reminders
-  const overdueFollowups = outreaches.filter(
-    (o) => o.followupDate && o.followupDate < today && !o.status.includes("rejected")
-  );
+  const overdueFollowups = outreaches.filter((o) => o.followupDate && o.followupDate < today && o.status !== "rejected" && o.status !== "holdoff");
   const upcomingFollowups = outreaches.filter(
-    (o) => o.followupDate && o.followupDate >= today && o.followupDate <= new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0] && !o.status.includes("rejected")
+    (o) => o.followupDate && o.followupDate >= today && o.followupDate <= new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0] && o.status !== "rejected" && o.status !== "holdoff"
   );
+  const allFollowups = useMemo(() => {
+    return outreaches
+      .filter((o) => o.followupDate && o.status !== "rejected" && o.status !== "holdoff")
+      .sort((a, b) => a.followupDate.localeCompare(b.followupDate));
+  }, [outreaches]);
 
-  // Filtered & sorted outreaches
   const filtered = useMemo(() => {
     let list = [...outreaches];
-
     if (search) {
       const q = search.toLowerCase();
-      list = list.filter(
-        (o) =>
-          o.investor.toLowerCase().includes(q) ||
-          o.company.toLowerCase().includes(q) ||
-          o.notes.toLowerCase().includes(q)
-      );
+      list = list.filter((o) => o.company.toLowerCase().includes(q) || o.contacts.some((c) => c.name.toLowerCase().includes(q)) || o.notes.toLowerCase().includes(q));
     }
-    if (filterStage) list = list.filter((o) => (Array.isArray(o.stage) ? o.stage : []).includes(filterStage));
-    if (filterStatus) list = list.filter((o) => (Array.isArray(o.status) ? o.status : []).includes(filterStatus));
-    // Source filter — show if ANY of the entry's sources are selected
-    if (filterSources.size < 4) {
-      list = list.filter((o) => {
-        const srcs = o.sources && o.sources.length > 0 ? o.sources : [o.source];
-        return srcs.some((s) => filterSources.has(s));
-      });
-    }
-
+    if (filterStage) list = list.filter((o) => o.stage === filterStage);
+    if (filterStatus) list = list.filter((o) => o.status === filterStatus);
+    if (filterSources.size < 4) list = list.filter((o) => o.sources.some((s) => filterSources.has(s)));
     switch (sortBy) {
-      case "recent":
-        list.sort((a, b) => b.dateAdded.localeCompare(a.dateAdded));
-        break;
-      case "date-asc":
-        list.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded));
-        break;
-      case "followup":
-        list.sort((a, b) => (a.followupDate || "z").localeCompare(b.followupDate || "z"));
-        break;
-      case "investor":
-        list.sort((a, b) => a.investor.localeCompare(b.investor));
-        break;
+      case "recent": list.sort((a, b) => b.dateAdded.localeCompare(a.dateAdded)); break;
+      case "date-asc": list.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded)); break;
+      case "followup": list.sort((a, b) => (a.followupDate || "z").localeCompare(b.followupDate || "z")); break;
+      case "company": list.sort((a, b) => a.company.localeCompare(b.company)); break;
     }
-
     return list;
   }, [outreaches, search, filterStage, filterStatus, filterSources, sortBy]);
 
-  // Chart data — last 30 days
   const chartData = useMemo(() => {
     const days: Record<string, number> = {};
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      days[d.toISOString().split("T")[0]] = 0;
-    }
-    outreaches.forEach((o) => {
-      if (days[o.dateAdded] !== undefined) days[o.dateAdded]++;
-    });
+    for (let i = 29; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days[d.toISOString().split("T")[0]] = 0; }
+    outreaches.forEach((o) => { if (days[o.dateAdded] !== undefined) days[o.dateAdded]++; });
     return Object.entries(days).map(([date, count]) => ({ date, count }));
   }, [outreaches]);
-
   const maxChart = Math.max(settings.dailyTarget, ...chartData.map((d) => d.count), 1);
 
-  // Sync
+  function companyKeysOverlap(keyA: string, keyB: string): boolean {
+    const partsA = keyA.split("|").filter((p) => p.length >= 4);
+    const partsB = keyB.split("|").filter((p) => p.length >= 4);
+    return partsA.some((a) => partsB.some((b) => a.includes(b) || b.includes(a)));
+  }
+
   async function handleSync() {
     setSyncing(true);
     setSyncMessage("Scanning emails and calendar...");
     try {
-      const existingSourceIds = outreaches.filter((o) => o.sourceId).map((o) => o.sourceId!);
-      const res = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ existingSourceIds }),
-      });
+      const existingSourceIds = outreaches.flatMap((o) => o.sourceIds);
+      const res = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ existingSourceIds }) });
       const data = await res.json();
-
-      if (data.error) {
-        setSyncMessage(`Error: ${data.error}`);
-        return;
-      }
-
+      if (data.error) { setSyncMessage(`Error: ${data.error}`); return; }
       if (data.newOutreaches.length > 0) {
         let updated = [...outreaches];
-        let newCount = 0;
-        let mergedCount = 0;
-
-        for (const rawO of data.newOutreaches as Outreach[]) {
-          const newO = {
-            ...rawO,
-            stage: Array.isArray(rawO.stage) ? rawO.stage : typeof rawO.stage === "string" ? [rawO.stage] : [],
-            status: Array.isArray(rawO.status) ? rawO.status : typeof rawO.status === "string" ? [rawO.status] : [],
-            contactMethod: Array.isArray(rawO.contactMethod) ? rawO.contactMethod : typeof rawO.contactMethod === "string" ? [rawO.contactMethod] : [],
-          };
-
-          // Skip entries where the "investor" is actually the founder
-          const selfNames = ["sarthak", "sarthak sharma"];
-          if (selfNames.includes(newO.investor.toLowerCase().trim())) {
-            // Still useful — try to merge by company
-            if (!newO.company) continue;
-            newO.investor = newO.company;
-          }
-
-          // Match by company or investor — split on | , & to match sub-parts
-          const investorLower = newO.investor.toLowerCase().trim();
-          const companyLower = newO.company.toLowerCase().trim();
-          const companyParts = companyLower.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
-          const investorParts = investorLower.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
-
-          const existing = updated.find((o) => {
-            const oCo = o.company.toLowerCase().trim();
-            const oInv = o.investor.toLowerCase().trim();
-            const oCoParts = oCo.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
-            const oInvParts = oInv.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
-
-            // Any company sub-part matches any existing company sub-part
-            if (companyParts.some((cp) => oCoParts.some((op) => op.includes(cp) || cp.includes(op)))) return true;
-            // Full company match
-            if (companyLower && oCo && (oCo.includes(companyLower) || companyLower.includes(oCo))) return true;
-            // Investor name match (exact or contains)
-            if (investorLower && oInv && oInv.length > 3 && investorLower.length > 3 && (oInv.includes(investorLower) || investorLower.includes(oInv))) return true;
-            // Cross-check: investor parts against company parts
-            if (investorParts.some((ip) => oCoParts.some((op) => op.includes(ip) || ip.includes(op)))) return true;
-            if (companyParts.some((cp) => oInvParts.some((op) => op.includes(cp) || cp.includes(op)))) return true;
-            return false;
-          });
-
+        let newCount = 0, mergedCount = 0;
+        for (const newO of data.newOutreaches as CompanyOutreach[]) {
+          const newKey = newO.companyKey || normalizeCompanyKey(newO.company);
+          const existing = updated.find((o) => o.companyKey === newKey || companyKeysOverlap(o.companyKey, newKey));
           if (existing) {
-            existing.threadCount = (existing.threadCount || 1) + 1;
-            // If the existing entry has a generic name (same as company), update to the real person
-            if (existing.investor === existing.company && newO.investor !== newO.company) {
-              existing.investor = newO.investor;
+            for (const c of newO.contacts) { if (!existing.contacts.some((ec) => ec.name.toLowerCase() === c.name.toLowerCase())) existing.contacts.push(c); }
+            existing.threadCount += newO.threadCount;
+            for (const s of newO.sources) { if (!existing.sources.includes(s)) existing.sources.push(s); }
+            existing.sourceIds.push(...newO.sourceIds);
+            existing.emailLinks.push(...newO.emailLinks);
+            if (newO.notes && !existing.notes.includes(newO.notes)) existing.notes = existing.notes ? `${existing.notes} | ${newO.notes}` : newO.notes;
+            if (newO.company && !existing.company.toLowerCase().includes(newO.company.toLowerCase())) {
+              existing.company = `${existing.company} | ${newO.company}`;
+              existing.companyKey = normalizeCompanyKey(existing.company);
             }
-            // Track all sources
-            const srcSet = new Set(existing.sources || [existing.source]);
-            srcSet.add(newO.source);
-            existing.sources = [...srcSet];
-            // Collect email links
-            if (newO.emailLink) {
-              existing.emailLinks = [...(existing.emailLinks || (existing.emailLink ? [existing.emailLink] : [])), newO.emailLink];
-            }
-            // Append notes if different
-            if (newO.notes && !existing.notes.includes(newO.notes)) {
-              existing.notes = existing.notes ? `${existing.notes} | ${newO.notes}` : newO.notes;
-            }
-            // Upgrade todo → ongoing
-            if (existing.status.includes("todo")) {
-              existing.status = ["ongoing"];
-              existing.outreachDate = existing.outreachDate || newO.outreachDate;
-            }
-            if (newO.status.includes("rejected")) {
-              existing.status = ["rejected"];
-            }
+            if (existing.status === "todo") { existing.status = "ongoing"; existing.outreachDate = existing.outreachDate || newO.outreachDate; }
+            if (newO.status === "rejected") existing.status = "rejected";
             mergedCount++;
-          } else {
-            updated.push({
-              ...newO,
-              threadCount: 1,
-              sources: [newO.source],
-              emailLinks: newO.emailLink ? [newO.emailLink] : [],
-            });
-            newCount++;
-          }
+          } else { updated.push({ ...newO, companyKey: newKey }); newCount++; }
         }
-
         persist(updated);
         const parts = [];
         if (newCount > 0) parts.push(`${newCount} new`);
         if (mergedCount > 0) parts.push(`${mergedCount} merged`);
         setSyncMessage(`${parts.join(", ")} (scanned ${data.totalScanned})`);
-      } else {
-        setSyncMessage(`No new items found (scanned ${data.totalScanned || 0} items)`);
-      }
-    } catch (err) {
-      setSyncMessage(`Sync failed: ${(err as Error).message}`);
-    } finally {
-      setSyncing(false);
-      localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
-      setLastSynced(new Date().toLocaleString());
-      setTimeout(() => setSyncMessage(""), 5000);
-    }
+      } else { setSyncMessage(`No new items found (scanned ${data.totalScanned || 0} items)`); }
+    } catch (err) { setSyncMessage(`Sync failed: ${(err as Error).message}`); }
+    finally { setSyncing(false); localStorage.setItem(LAST_SYNC_KEY, Date.now().toString()); setLastSynced(new Date().toLocaleString()); setTimeout(() => setSyncMessage(""), 5000); }
   }
 
-  // CRUD
   function openAdd() {
     setEditId(null);
-    setForm({
-      investor: "",
-      company: "",
-      stage: [],
-      contactMethod: [],
-      status: [],
-      outreachDate: getToday(),
-      followupDate: "",
-      notes: "",
-    });
+    setForm({ company: "", contacts: "", stage: "", status: "", outreachDate: getToday(), followupDate: "", notes: "" });
     setShowModal(true);
   }
 
-  function openEdit(o: Outreach) {
+  function openEdit(o: CompanyOutreach) {
     setEditId(o.id);
-    setForm({
-      investor: o.investor,
-      company: o.company,
-      stage: [...o.stage],
-      contactMethod: [...o.contactMethod],
-      status: [...o.status],
-      outreachDate: o.outreachDate,
-      followupDate: o.followupDate,
-      notes: o.notes,
-    });
+    setForm({ company: o.company, contacts: o.contacts.map((c) => c.name).join(", "), stage: o.stage, status: o.status, outreachDate: o.outreachDate, followupDate: o.followupDate, notes: o.notes });
     setShowModal(true);
   }
 
   function handleSave() {
-    if (!form.investor.trim()) return;
-
+    if (!form.company.trim()) return;
+    const contactsList = form.contacts.split(",").map((n) => n.trim()).filter((n) => n.length > 0).map((name) => ({ name }));
     if (editId) {
-      const updated = outreaches.map((o) =>
-        o.id === editId ? { ...o, ...form } : o
-      );
-      persist(updated);
+      persist(outreaches.map((o) => o.id === editId ? { ...o, company: form.company, companyKey: normalizeCompanyKey(form.company), contacts: contactsList, stage: form.stage || "seed", status: form.status || "todo", outreachDate: form.outreachDate, followupDate: form.followupDate, notes: form.notes } : o));
     } else {
-      const newOutreach: Outreach = {
-        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
-        ...form,
-        dateAdded: getToday(),
-        source: "manual",
-      };
-      persist([...outreaches, newOutreach]);
+      persist([...outreaches, {
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36), company: form.company,
+        companyKey: normalizeCompanyKey(form.company), contacts: contactsList, stage: form.stage || "seed",
+        status: form.status || "todo", sources: ["manual"], sourceIds: [], emailLinks: [], threadCount: 0,
+        outreachDate: form.outreachDate, followupDate: form.followupDate, notes: form.notes, dateAdded: getToday(),
+      }]);
     }
     setShowModal(false);
   }
 
-  function handleDelete(id: string) {
-    if (confirm("Delete this outreach?")) {
-      persist(outreaches.filter((o) => o.id !== id));
-    }
-  }
+  function handleDelete(id: string) { if (confirm("Delete this outreach?")) persist(outreaches.filter((o) => o.id !== id)); }
 
   function handleExport() {
     const data = JSON.stringify({ outreaches, settings, exportedAt: new Date().toISOString() }, null, 2);
     const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `outreach-backup-${getToday()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const a = document.createElement("a"); a.href = url; a.download = `outreach-backup-${getToday()}.json`; a.click(); URL.revokeObjectURL(url);
   }
 
   function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result as string);
         if (data.outreaches) {
-          const imported = data.outreaches.map((o: Outreach) => ({
-            ...o,
-            source: o.source || "manual",
-          }));
+          const first = data.outreaches[0];
+          const imported = first && "investor" in first ? migrateV2ToV3(data.outreaches) : data.outreaches;
           persist(imported);
-          if (data.settings) {
-            setSettingsState(data.settings);
-            saveSettings(data.settings);
-          }
+          if (data.settings) { setSettingsState(data.settings); saveSettings(data.settings); }
           alert(`Imported ${imported.length} outreaches`);
         }
-      } catch {
-        alert("Invalid JSON file");
-      }
+      } catch { alert("Invalid JSON file"); }
     };
-    reader.readAsText(file);
-    e.target.value = "";
+    reader.readAsText(file); e.target.value = "";
   }
 
   function handleBulkAdd() {
     if (!bulkText.trim()) return;
-    // Split by newline or comma
-    const names = bulkText
-      .split(/[,\n]/)
-      .map((n) => n.trim())
-      .filter((n) => n.length > 0);
-
+    const names = bulkText.split(/[,\n]/).map((n) => n.trim()).filter((n) => n.length > 0);
     const today = getToday();
-    const newEntries: Outreach[] = names.map((name) => ({
+    const newEntries: CompanyOutreach[] = names.map((name) => ({
       id: Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-      investor: name,
-      company: name,
-      stage: ["seed"],
-      contactMethod: [],
-      status: ["todo"],
-      outreachDate: "",
-      followupDate: "",
-      notes: "",
-      dateAdded: today,
-      source: "manual" as const,
-      priority: bulkPriority,
+      company: name, companyKey: normalizeCompanyKey(name), contacts: [], stage: "seed", status: "todo",
+      sources: ["manual"], sourceIds: [], emailLinks: [], threadCount: 0, outreachDate: "", followupDate: "",
+      notes: "", dateAdded: today, priority: bulkPriority,
     }));
-
-    // Avoid duplicates
-    const existingNames = new Set(outreaches.map((o) => o.investor.toLowerCase()));
-    const unique = newEntries.filter((e) => !existingNames.has(e.investor.toLowerCase()));
-
-    if (unique.length > 0) {
-      persist([...outreaches, ...unique]);
-    }
-    setShowBulkAdd(false);
-    setBulkText("");
-    if (unique.length < names.length) {
-      setSyncMessage(`Added ${unique.length} new targets (${names.length - unique.length} already existed)`);
-    } else {
-      setSyncMessage(`Added ${unique.length} new targets`);
-    }
+    const existingKeys = new Set(outreaches.map((o) => o.companyKey));
+    const unique = newEntries.filter((e) => !existingKeys.has(e.companyKey));
+    if (unique.length > 0) persist([...outreaches, ...unique]);
+    setShowBulkAdd(false); setBulkText("");
+    setSyncMessage(unique.length < names.length ? `Added ${unique.length} new targets (${names.length - unique.length} already existed)` : `Added ${unique.length} new targets`);
     setTimeout(() => setSyncMessage(""), 4000);
   }
 
-  function toggleArrayItem(arr: string[], item: string) {
-    return arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item];
+  function clearFollowupDate(id: string) {
+    persist(outreaches.map((o) => o.id === id ? { ...o, followupDate: "" } : o));
   }
 
-  return (
-    <div className="min-h-screen bg-slate-50/80">
-      {/* Top bar */}
-      <div className="bg-white/70 backdrop-blur-sm border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold text-slate-800 tracking-tight">Outreach Tracker</h1>
-            <p className="text-slate-400 text-xs mt-0.5">
-              {session?.user?.email}
-              {lastSynced && <span className="ml-2 text-slate-300">· Last sync: {lastSynced}</span>}
-            </p>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="px-4 py-2 bg-gradient-to-r from-violet-500 to-purple-500 text-white rounded-xl text-sm font-medium hover:from-violet-600 hover:to-purple-600 disabled:opacity-50 flex items-center gap-2 shadow-sm shadow-violet-200 transition-all"
-            >
-              {syncing ? (
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              )}
-              {syncing ? "Syncing..." : "Sync"}
-            </button>
-            <button onClick={openAdd} className="px-4 py-2 bg-teal-500 text-white rounded-xl text-sm font-medium hover:bg-teal-600 shadow-sm shadow-teal-200 transition-all">
-              + Add
-            </button>
-            <button onClick={() => setShowBulkAdd(true)} className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-all">
-              Bulk Add
-            </button>
-            <button onClick={() => setShowSettings(true)} className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-            </button>
-            <button onClick={() => signOut()} className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-400 hover:text-rose-500 hover:border-rose-200 transition-all">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>
+  function changeStatus(id: string, newStatus: string) {
+    persist(outreaches.map((o) => o.id === id ? { ...o, status: newStatus } : o));
+  }
 
-      <div className="max-w-6xl mx-auto px-6 py-6">
+  function addQuickNote() {
+    if (!noteInput.trim()) return;
+    const note: QuickNote = { id: Math.random().toString(36).slice(2) + Date.now().toString(36), text: noteInput.trim(), createdAt: new Date().toISOString() };
+    const updated = [note, ...quickNotes];
+    setQuickNotes(updated);
+    localStorage.setItem(NOTES_KEY, JSON.stringify(updated));
+    setNoteInput("");
+  }
+
+  function deleteQuickNote(id: string) {
+    const updated = quickNotes.filter((n) => n.id !== id);
+    setQuickNotes(updated);
+    localStorage.setItem(NOTES_KEY, JSON.stringify(updated));
+  }
+
+  // --- NAV ITEMS ---
+  // Status counts
+  const todoCount = outreaches.filter((o) => o.status === "todo").length;
+  const ongoingCount = outreaches.filter((o) => o.status === "ongoing").length;
+  const holdoffCount = outreaches.filter((o) => o.status === "holdoff").length;
+  const rejectedCount = outreaches.filter((o) => o.status === "rejected").length;
+
+  const navItems: { key: View; label: string; icon: React.ReactNode; badge?: number; section?: string }[] = [
+    {
+      key: "dashboard", label: "Dashboard", section: "Overview",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" /></svg>,
+    },
+    {
+      key: "todo", label: "To Do", section: "Pipeline",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>,
+      badge: todoCount || undefined,
+    },
+    {
+      key: "ongoing", label: "Ongoing",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>,
+      badge: ongoingCount || undefined,
+    },
+    {
+      key: "followups", label: "Follow-ups",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+      badge: overdueFollowups.length || undefined,
+    },
+    {
+      key: "holdoff", label: "Hold Off",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+      badge: holdoffCount || undefined,
+    },
+    {
+      key: "rejected", label: "Rejected",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>,
+      badge: rejectedCount || undefined,
+    },
+    {
+      key: "settings", label: "Settings", section: "System",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+    },
+  ];
+
+  // --- RENDER ---
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Mobile hamburger */}
+      <button
+        onClick={() => setSidebarOpen(true)}
+        className="fixed top-4 left-4 z-50 bg-gray-800 text-white rounded-lg p-2 md:hidden"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+      </button>
+
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* Sidebar */}
+      <aside className={`fixed md:sticky top-0 left-0 h-screen bg-gray-900 z-40 flex flex-col transition-all duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"}`}>
+        {/* Logo */}
+        <div className="px-6 py-5 border-b border-gray-700 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#7832E6] flex items-center justify-center shrink-0">
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          </div>
+          {!sidebarCollapsed && <span className="text-lg font-semibold text-white">Outreach</span>}
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 py-4 px-3 overflow-y-auto">
+          {navItems.map((item, i) => (
+            <div key={item.key}>
+              {item.section && !sidebarCollapsed && (
+                <div className={`text-[10px] font-semibold text-gray-500 uppercase tracking-widest px-4 ${i === 0 ? "mb-2" : "mt-4 mb-2"}`}>
+                  {item.section}
+                </div>
+              )}
+              {item.section && sidebarCollapsed && i > 0 && (
+                <div className="border-t border-gray-700 my-2 mx-2" />
+              )}
+              <button
+                onClick={() => { setView(item.key); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 mb-0.5 ${view === item.key ? "bg-[#7832E6] text-white" : "text-gray-300 hover:bg-gray-700 hover:text-white"}`}
+                title={sidebarCollapsed ? item.label : undefined}
+              >
+                {item.icon}
+                {!sidebarCollapsed && <span>{item.label}</span>}
+                {!sidebarCollapsed && item.badge !== undefined && (
+                  <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full ${view === item.key ? "bg-white/20 text-white" : "bg-gray-700 text-gray-400"}`}>{item.badge}</span>
+                )}
+              </button>
+            </div>
+          ))}
+        </nav>
+
+        {/* Bottom */}
+        <div className="border-t border-gray-700 py-4 space-y-1 px-3">
+          {/* Sync button */}
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className={`w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-50`}
+          >
+            <svg className={`w-5 h-5 shrink-0 ${syncing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            {!sidebarCollapsed && <span>{syncing ? "Syncing..." : "Sync"}</span>}
+          </button>
+          {/* Collapse toggle (desktop) */}
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="hidden md:flex w-full items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 text-gray-300 hover:bg-gray-700 hover:text-white"
+          >
+            <svg className={`w-5 h-5 shrink-0 transition-transform ${sidebarCollapsed ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+            {!sidebarCollapsed && <span>Collapse</span>}
+          </button>
+          {/* Sign out */}
+          <button
+            onClick={() => signOut()}
+            className="w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 text-gray-300 hover:bg-gray-700 hover:text-white"
+          >
+            <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            {!sidebarCollapsed && <span>Sign Out</span>}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main className="flex-1 min-h-screen p-4 pt-14 md:pt-8 md:p-8 max-w-7xl mx-auto w-full">
+        {/* Sync message */}
         {syncMessage && (
-          <div className={`mb-5 p-3.5 rounded-xl text-sm font-medium ${syncMessage.startsWith("Error") || syncMessage.startsWith("Sync failed") ? "bg-rose-50 text-rose-600 border border-rose-200" : "bg-violet-50 text-violet-600 border border-violet-200"}`}>
+          <div className={`mb-5 p-3.5 rounded-xl text-sm font-medium ${syncMessage.startsWith("Error") || syncMessage.startsWith("Sync failed") ? "bg-rose-50 text-rose-600 border border-rose-200" : "bg-purple-50 text-[#7832E6] border border-purple-200"}`}>
             {syncMessage}
           </div>
         )}
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
-          {[
-            { label: "Total", value: outreaches.length },
-            { label: "Today", value: todayCount, target: settings.dailyTarget },
-            { label: "This Week", value: weekCount, target: settings.weeklyTarget },
-            { label: "Daily Avg", value: avgDaily },
-            { label: "From Email", value: emailCount },
-            { label: "Calendar", value: calendarCount },
-            { label: "Accelerators", value: acceleratorCount },
-          ].map((stat, i) => (
-            <div key={stat.label} className={`bg-white rounded-2xl p-4 border-l-4 ${STAT_ACCENTS[i]} shadow-sm`}>
-              <div className="text-[11px] text-slate-400 uppercase tracking-wider font-medium">{stat.label}</div>
-              <div className="text-2xl font-bold text-slate-800 mt-1">{stat.value}</div>
-              {stat.target && <div className="text-[11px] text-slate-400 mt-0.5">/ {stat.target} target</div>}
-            </div>
-          ))}
-        </div>
-
-        {/* Chart */}
-        <div className="bg-white rounded-2xl p-6 mb-6 shadow-sm">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Last 30 Days</h2>
-            <div className="flex items-center gap-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-violet-400" /> Hit target</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-teal-300" /> Below</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-[2px] bg-rose-300 rounded" /> Target ({settings.dailyTarget})</span>
-            </div>
-          </div>
-          <div className="relative">
-            {/* Target line */}
-            <div
-              className="absolute left-0 right-0 border-t-2 border-dashed border-rose-200 z-10 pointer-events-none"
-              style={{ bottom: `${(settings.dailyTarget / maxChart) * 140 + 8}px` }}
-            />
-            <div className="flex items-end gap-[3px] h-44">
-              {chartData.map((d) => (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-1 group relative">
-                  <div className="absolute -top-8 bg-slate-800 text-white text-[10px] px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none z-20 shadow-lg transition-opacity">
-                    {d.date.slice(5)}: {d.count} outreach{d.count !== 1 ? "es" : ""}
-                  </div>
-                  <div
-                    className={`w-full rounded-md transition-all duration-300 ${d.count >= settings.dailyTarget ? "bg-gradient-to-t from-violet-400 to-violet-300" : d.count > 0 ? "bg-gradient-to-t from-teal-300 to-teal-200" : "bg-slate-100"}`}
-                    style={{ height: `${Math.max((d.count / maxChart) * 140, 3)}px` }}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Follow-up Reminders */}
-        {(overdueFollowups.length > 0 || upcomingFollowups.length > 0) && (
-          <div className="bg-white rounded-2xl p-6 mb-6 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-4">Follow-up Reminders</h2>
-            {overdueFollowups.length > 0 && (
-              <div className="mb-3 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
-                <span className="text-rose-500 text-xs font-semibold">{overdueFollowups.length} overdue</span>
+        {/* ===== DASHBOARD VIEW ===== */}
+        {view === "dashboard" && (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Dashboard</h1>
+                <p className="text-sm text-gray-500 mt-1">{session?.user?.email}{lastSynced && <span className="ml-2 text-gray-400">· Last sync: {lastSynced}</span>}</p>
               </div>
-            )}
-            <div className="space-y-2">
-              {[...overdueFollowups, ...upcomingFollowups].slice(0, 8).map((o) => (
-                <div
-                  key={o.id}
-                  className={`flex items-center justify-between p-3.5 rounded-xl border-l-4 ${o.followupDate < today ? "border-l-rose-400 bg-rose-50/50" : "border-l-amber-400 bg-amber-50/50"}`}
-                >
-                  <div>
-                    <div className="font-medium text-sm text-slate-700">{o.investor} {o.company && <span className="text-slate-400">· {o.company}</span>}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">{o.notes}</div>
-                  </div>
-                  <div className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${o.followupDate < today ? "bg-rose-100 text-rose-500" : "bg-amber-100 text-amber-600"}`}>
-                    {o.followupDate}
-                  </div>
+              <div className="flex gap-2">
+                <button onClick={openAdd} className="px-4 py-2 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors">+ Add Outreach</button>
+                <button onClick={() => setShowBulkAdd(true)} className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-purple-300 transition-colors">Bulk Add</button>
+              </div>
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+              {[
+                { label: "Total", value: outreaches.length, color: "text-[#7832E6]" },
+                { label: "To Do", value: todoCount, color: "text-sky-600" },
+                { label: "Ongoing", value: ongoingCount, color: "text-emerald-600" },
+                { label: "Hold Off", value: holdoffCount, color: "text-orange-600" },
+                { label: "Rejected", value: rejectedCount, color: "text-rose-500" },
+              ].map((stat) => (
+                <div key={stat.label} className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md hover:border-purple-200 transition-all">
+                  <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{stat.label}</div>
+                  <div className={`text-2xl font-bold mt-1 ${stat.color}`}>{stat.value}</div>
                 </div>
               ))}
             </div>
-          </div>
-        )}
 
-        {/* Filters & Table */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm">
-          <div className="flex flex-wrap items-center gap-3 mb-5">
-            <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">All Outreaches</h2>
-            <div className="ml-auto relative">
-              <svg className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-              <input
-                type="text"
-                placeholder="Search investors..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-sm w-64 focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all bg-slate-50/50 placeholder:text-slate-300"
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 mb-5">
-            {[
-              { value: sortBy, setter: setSortBy, options: [["recent", "Recent first"], ["date-asc", "Oldest first"], ["followup", "Follow-up date"], ["investor", "Name A-Z"]] },
-              { value: filterStage, setter: setFilterStage, options: [["", "All Stages"], ["angel", "Angel"], ["seed", "Seed"], ["series-a", "Series A"], ["accelerator", "Accelerator"]] },
-              { value: filterStatus, setter: setFilterStatus, options: [["", "All Statuses"], ["todo", "ToDo"], ["ongoing", "Ongoing"], ["holdoff", "Hold off"], ["rejected", "Rejected"]] },
-            ].map((f, i) => (
-              <select
-                key={i}
-                value={f.value}
-                onChange={(e) => f.setter(e.target.value)}
-                className="px-3 py-1.5 border border-slate-200 rounded-xl text-sm bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all cursor-pointer"
-              >
-                {f.options.map(([val, label]) => (
-                  <option key={val} value={val}>{label}</option>
-                ))}
-              </select>
-            ))}
-            <div className="flex items-center gap-1 ml-1">
-              {(["manual", "email", "calendar", "accelerator"] as const).map((s) => {
-                const src = SOURCE_ICONS[s];
-                const active = filterSources.has(s);
-                return (
+            {/* Drop Links/Notes */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Input side */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Drop Links / Notes</h2>
+                <div className="space-y-3">
+                  <textarea
+                    value={noteInput}
+                    onChange={(e) => setNoteInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addQuickNote(); } }}
+                    rows={4}
+                    placeholder={"Paste a link, jot a quick note...\nPress Enter to save, Shift+Enter for new line"}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm resize-y focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all bg-gray-50 placeholder:text-gray-400"
+                  />
                   <button
-                    key={s}
-                    onClick={() => {
-                      const next = new Set(filterSources);
-                      if (active) next.delete(s); else next.add(s);
-                      setFilterSources(next);
-                    }}
-                    className={`px-2 py-1 rounded-lg text-xs font-medium border transition-all flex items-center gap-1 ${active ? "bg-violet-50 border-violet-200 text-violet-600" : "bg-white border-slate-200 text-slate-300"}`}
-                    title={src.label}
+                    onClick={addQuickNote}
+                    disabled={!noteInput.trim()}
+                    className="w-full px-4 py-2.5 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <span>{src.icon}</span>
-                    <span className="hidden sm:inline">{src.label}</span>
+                    Save Note
                   </button>
-                );
-              })}
-            </div>
-          </div>
+                </div>
+              </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100">
-                  {["Source", "Investor", "Company", "Stage", "Priority", "Status", "Threads", "Date", "Notes", ""].map((h) => (
-                    <th key={h} className="text-left p-3 text-[11px] text-slate-400 uppercase tracking-wider font-medium">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((o) => {
-                  const allSources = o.sources && o.sources.length > 0 ? o.sources : [o.source];
-                  const primarySrc = SOURCE_ICONS[allSources[0]] || SOURCE_ICONS.manual;
-                  return (
-                    <tr key={o.id} className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors border-l-4 ${primarySrc.color}`}>
-                      <td className="p-3">
-                        <div className="flex gap-0.5" title={allSources.map(s => SOURCE_ICONS[s]?.label || s).join(" + ")}>
-                          {[...new Set(allSources)].map((s) => (
-                            <span key={s} className="text-sm">{SOURCE_ICONS[s]?.icon || "✏️"}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-3 font-semibold text-slate-700">{o.investor}</td>
-                      <td className="p-3 text-slate-400">{o.company || "—"}</td>
-                      <td className="p-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(Array.isArray(o.stage) ? o.stage : typeof o.stage === "string" ? [o.stage] : []).map((s) => (
-                            <span key={s} className={`px-2 py-0.5 rounded-lg text-[11px] font-medium ${STAGE_COLORS[s] || "bg-slate-50 text-slate-500 border border-slate-200"}`}>{s}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        {o.priority && (
-                          <span className={`px-2 py-0.5 rounded-lg text-[11px] font-medium ${PRIORITY_COLORS[o.priority] || ""}`}>{o.priority}</span>
-                        )}
-                      </td>
-                      <td className="p-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(Array.isArray(o.status) ? o.status : typeof o.status === "string" ? [o.status] : []).map((s) => (
-                            <span key={s} className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_COLORS[s] || "bg-slate-50 text-slate-500 border border-slate-200"}`}>{s}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        {(o.threadCount || 0) > 1 ? (
-                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-violet-100 text-violet-600 text-[11px] font-bold">{o.threadCount}</span>
-                        ) : (o.threadCount === 1 ? (
-                          <span className="text-slate-300 text-xs">1</span>
-                        ) : (
-                          <span className="text-slate-200 text-xs">—</span>
-                        ))}
-                      </td>
-                      <td className="p-3 text-slate-400 whitespace-nowrap text-xs">{o.outreachDate || "—"}</td>
-                      <td className="p-3 text-slate-400 max-w-[220px] text-xs">
-                        <div className="truncate">{o.notes || "—"}</div>
-                        {/* Email links */}
-                        {(o.emailLinks && o.emailLinks.length > 0) ? (
-                          <div className="flex flex-wrap gap-1.5 mt-1">
-                            {o.emailLinks.map((link, i) => (
-                              <a key={i} href={link} target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:text-violet-600 text-[10px] font-medium inline-flex items-center gap-0.5">
-                                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                                email {i + 1}
-                              </a>
-                            ))}
-                          </div>
-                        ) : o.emailLink ? (
-                          <a href={o.emailLink} target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:text-violet-600 text-[10px] font-medium mt-0.5 inline-flex items-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                            Open in Gmail
-                          </a>
-                        ) : null}
-                      </td>
-                      <td className="p-3">
-                        <div className="flex gap-1">
-                          <button onClick={() => openEdit(o)} className="w-7 h-7 border border-slate-200 rounded-lg flex items-center justify-center hover:bg-violet-50 hover:border-violet-200 hover:text-violet-500 text-slate-400 text-xs transition-all">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                          </button>
-                          <button onClick={() => handleDelete(o.id)} className="w-7 h-7 border border-slate-200 rounded-lg flex items-center justify-center hover:bg-rose-50 hover:border-rose-200 hover:text-rose-500 text-slate-400 text-xs transition-all">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {filtered.length === 0 && (
-              <div className="text-center py-16 text-slate-400">
-                {outreaches.length === 0 ? (
-                  <div>
-                    <div className="text-4xl mb-3">🎯</div>
-                    <p className="font-medium text-slate-600 mb-1">No outreaches yet</p>
-                    <p className="text-sm">Click &quot;+ Add&quot; or &quot;Sync&quot; to get started</p>
+              {/* Notes list side */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Saved Notes</h2>
+                  <span className="text-[10px] text-gray-400 font-medium">{quickNotes.length} item{quickNotes.length !== 1 ? "s" : ""}</span>
+                </div>
+                {quickNotes.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400">
+                    <svg className="w-10 h-10 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                    <p className="text-sm">No notes yet</p>
+                    <p className="text-xs text-gray-300 mt-1">Drop links, ideas, or quick notes here</p>
                   </div>
                 ) : (
-                  <p className="text-sm">No outreaches match your filters</p>
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {quickNotes.map((note) => {
+                      const isLink = /https?:\/\/\S+/.test(note.text);
+                      const timeAgo = (() => {
+                        const diff = Date.now() - new Date(note.createdAt).getTime();
+                        const mins = Math.floor(diff / 60000);
+                        if (mins < 1) return "just now";
+                        if (mins < 60) return `${mins}m ago`;
+                        const hrs = Math.floor(mins / 60);
+                        if (hrs < 24) return `${hrs}h ago`;
+                        const days = Math.floor(hrs / 24);
+                        return `${days}d ago`;
+                      })();
+                      return (
+                        <div key={note.id} className="group flex items-start gap-3 p-3 rounded-lg border border-gray-100 hover:border-purple-200 hover:bg-gray-50/50 transition-all">
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${isLink ? "bg-purple-100 text-[#7832E6]" : "bg-gray-100 text-gray-400"}`}>
+                            {isLink ? (
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                            ) : (
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-gray-700 whitespace-pre-wrap break-words">
+                              {note.text.split(/(https?:\/\/\S+)/g).map((part, i) =>
+                                /^https?:\/\//.test(part) ? (
+                                  <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-[#7832E6] hover:text-[#6526C7] underline underline-offset-2 break-all">{part}</a>
+                                ) : <span key={i}>{part}</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-gray-400 mt-1">{timeAgo}</div>
+                          </div>
+                          <button
+                            onClick={() => deleteQuickNote(note.id)}
+                            className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-lg flex items-center justify-center hover:bg-rose-50 hover:text-rose-500 text-gray-300 transition-all shrink-0"
+                            title="Delete note"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Add/Edit Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold text-slate-800 mb-5">{editId ? "Edit Outreach" : "Add Outreach"}</h2>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Investor Name</label>
-                  <input value={form.investor} onChange={(e) => setForm({ ...form, investor: e.target.value })} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" placeholder="Name..." />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Company</label>
-                  <input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" placeholder="Fund / Company..." />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Stage</label>
-                <div className="flex flex-wrap gap-2">
-                  {["angel", "seed", "series-a", "series-b", "accelerator"].map((s) => (
-                    <button key={s} type="button" onClick={() => setForm({ ...form, stage: toggleArrayItem(form.stage, s) })} className={`px-3.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${form.stage.includes(s) ? "bg-violet-500 text-white border-violet-500 shadow-sm shadow-violet-200" : "bg-white border-slate-200 text-slate-500 hover:border-violet-200 hover:text-violet-500"}`}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Contact Method</label>
-                <div className="flex flex-wrap gap-2">
-                  {["email", "linkedin", "warm-intro", "cold-call", "other"].map((s) => (
-                    <button key={s} type="button" onClick={() => setForm({ ...form, contactMethod: toggleArrayItem(form.contactMethod, s) })} className={`px-3.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${form.contactMethod.includes(s) ? "bg-teal-500 text-white border-teal-500 shadow-sm shadow-teal-200" : "bg-white border-slate-200 text-slate-500 hover:border-teal-200 hover:text-teal-500"}`}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Status</label>
-                <div className="flex flex-wrap gap-2">
-                  {["todo", "ongoing", "holdoff", "rejected"].map((s) => (
-                    <button key={s} type="button" onClick={() => setForm({ ...form, status: toggleArrayItem(form.status, s) })} className={`px-3.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${form.status.includes(s) ? "bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-200" : "bg-white border-slate-200 text-slate-500 hover:border-amber-200 hover:text-amber-500"}`}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Outreach Date</label>
-                  <input type="date" value={form.outreachDate} onChange={(e) => setForm({ ...form, outreachDate: e.target.value })} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Follow-up Date</label>
-                  <input type="date" value={form.followupDate} onChange={(e) => setForm({ ...form, followupDate: e.target.value })} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Notes</label>
-                <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" placeholder="Add notes, links..." />
-              </div>
-              <div className="flex justify-end gap-2 pt-3">
-                <button onClick={() => setShowModal(false)} className="px-5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50 transition-all">Cancel</button>
-                <button onClick={handleSave} className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-purple-500 text-white rounded-xl text-sm font-medium hover:from-violet-600 hover:to-purple-600 shadow-sm shadow-violet-200 transition-all">Save</button>
-              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowSettings(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold text-slate-800 mb-5">Settings</h2>
-            <div className="space-y-4">
+        {/* ===== FOLLOW-UPS VIEW ===== */}
+        {view === "followups" && (
+          <>
+            <div className="flex items-center justify-between mb-6">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Daily Target</label>
-                <input type="number" value={settings.dailyTarget} onChange={(e) => setSettingsState({ ...settings, dailyTarget: parseInt(e.target.value) || 5 })} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" />
+                <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Follow-ups</h1>
+                <p className="text-sm text-gray-500 mt-1">{allFollowups.length} scheduled · {overdueFollowups.length} overdue</p>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Weekly Target</label>
-                <input type="number" value={settings.weeklyTarget} onChange={(e) => setSettingsState({ ...settings, weeklyTarget: parseInt(e.target.value) || 25 })} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all" />
+              <button onClick={openAdd} className="px-4 py-2 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors">+ Add</button>
+            </div>
+
+            {allFollowups.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-200 p-16 text-center">
+                <div className="text-4xl mb-3">🔔</div>
+                <p className="font-medium text-gray-600 mb-1">No follow-ups scheduled</p>
+                <p className="text-sm text-gray-400">Edit an outreach to set a follow-up date</p>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Data</label>
-                <div className="flex gap-2 mt-2">
-                  <button onClick={handleExport} className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-all">Export JSON</button>
-                  <label className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-all cursor-pointer text-center">
+            ) : (
+              <div className="space-y-3">
+                {allFollowups.map((o) => {
+                  const isOverdue = o.followupDate < today;
+                  const isUpcoming = o.followupDate >= today && o.followupDate <= new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0];
+                  return (
+                    <div
+                      key={o.id}
+                      className={`group bg-white rounded-xl border p-5 transition-all hover:shadow-lg cursor-pointer ${isOverdue ? "border-rose-200 hover:border-rose-300" : isUpcoming ? "border-amber-200 hover:border-amber-300" : "border-gray-200 hover:border-purple-300"}`}
+                      onClick={() => openEdit(o)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-gray-900">{o.company}</span>
+                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${STAGE_COLORS[o.stage] || "bg-gray-50 text-gray-500 border border-gray-200"}`}>{o.stage}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_COLORS[o.status] || "bg-gray-50 text-gray-500 border border-gray-200"}`}>{o.status}</span>
+                          </div>
+                          {o.contacts.length > 0 && (
+                            <div className="text-xs text-gray-500 mb-1">{o.contacts.map((c) => c.name).join(", ")}</div>
+                          )}
+                          <div className="text-sm text-gray-600 truncate">{o.notes || "No notes"}</div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4 shrink-0">
+                          <div className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${isOverdue ? "bg-rose-100 text-rose-500" : isUpcoming ? "bg-amber-100 text-amber-600" : "bg-gray-100 text-gray-500"}`}>
+                            {o.followupDate}
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEdit(o); }}
+                            className="opacity-0 group-hover:opacity-100 w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center hover:bg-purple-50 hover:border-purple-200 hover:text-[#7832E6] text-gray-400 transition-all"
+                            title="Edit"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); clearFollowupDate(o.id); }}
+                            className="opacity-0 group-hover:opacity-100 w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center hover:bg-rose-50 hover:border-rose-200 hover:text-rose-500 text-gray-400 transition-all"
+                            title="Remove follow-up"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(o.id); }}
+                            className="opacity-0 group-hover:opacity-100 w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center hover:bg-rose-50 hover:border-rose-200 hover:text-rose-500 text-gray-400 transition-all"
+                            title="Delete outreach"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ===== STATUS-FILTERED VIEWS (todo, ongoing, holdoff, rejected) ===== */}
+        {(view === "todo" || view === "ongoing" || view === "holdoff" || view === "rejected") && (() => {
+          const statusLabel: Record<string, string> = { todo: "To Do", ongoing: "Ongoing", holdoff: "Hold Off", rejected: "Rejected" };
+          const statusMoveOptions: Record<string, { label: string; value: string; color: string }[]> = {
+            todo: [
+              { label: "Start → Ongoing", value: "ongoing", color: "bg-emerald-500 hover:bg-emerald-600" },
+              { label: "Hold Off", value: "holdoff", color: "bg-orange-500 hover:bg-orange-600" },
+            ],
+            ongoing: [
+              { label: "Hold Off", value: "holdoff", color: "bg-orange-500 hover:bg-orange-600" },
+              { label: "Rejected", value: "rejected", color: "bg-rose-500 hover:bg-rose-600" },
+              { label: "Back to ToDo", value: "todo", color: "bg-sky-500 hover:bg-sky-600" },
+            ],
+            holdoff: [
+              { label: "Resume → Ongoing", value: "ongoing", color: "bg-emerald-500 hover:bg-emerald-600" },
+              { label: "Back to ToDo", value: "todo", color: "bg-sky-500 hover:bg-sky-600" },
+              { label: "Rejected", value: "rejected", color: "bg-rose-500 hover:bg-rose-600" },
+            ],
+            rejected: [
+              { label: "Re-open → ToDo", value: "todo", color: "bg-sky-500 hover:bg-sky-600" },
+              { label: "Resume → Ongoing", value: "ongoing", color: "bg-emerald-500 hover:bg-emerald-600" },
+            ],
+          };
+          const items = outreaches.filter((o) => o.status === view).sort((a, b) => b.dateAdded.localeCompare(a.dateAdded));
+          const moves = statusMoveOptions[view] || [];
+
+          return (
+            <>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">{statusLabel[view]}</h1>
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[view]}`}>{items.length}</span>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-1">{items.length} outreach{items.length !== 1 ? "es" : ""}</p>
+                </div>
+                <button onClick={openAdd} className="px-4 py-2 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors">+ Add</button>
+              </div>
+
+              {items.length === 0 ? (
+                <div className="bg-white rounded-xl border border-gray-200 p-16 text-center">
+                  <div className="text-4xl mb-3">{view === "todo" ? "📋" : view === "ongoing" ? "🚀" : view === "holdoff" ? "⏸️" : "❌"}</div>
+                  <p className="font-medium text-gray-600 mb-1">No {statusLabel[view].toLowerCase()} outreaches</p>
+                  <p className="text-sm text-gray-400">Items will appear here when their status changes to {statusLabel[view].toLowerCase()}</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {items.map((o) => (
+                    <div key={o.id} className="group bg-white rounded-xl border border-gray-200 p-5 transition-all hover:shadow-lg hover:border-purple-300">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openEdit(o)}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-gray-900">{o.company}</span>
+                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${STAGE_COLORS[o.stage] || "bg-gray-50 text-gray-500 border border-gray-200"}`}>{o.stage}</span>
+                            {o.priority && <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${PRIORITY_COLORS[o.priority]}`}>{o.priority}</span>}
+                            {o.sources.map((s) => <span key={s} className="text-sm">{SOURCE_ICONS[s]?.icon || "✏️"}</span>)}
+                          </div>
+                          {o.contacts.length > 0 && (
+                            <div className="text-xs text-gray-500 mb-1">{o.contacts.map((c) => c.name).join(", ")}</div>
+                          )}
+                          {o.notes && <div className="text-sm text-gray-600 truncate">{o.notes}</div>}
+                          <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-400">
+                            {o.outreachDate && <span>Outreach: {o.outreachDate}</span>}
+                            {o.followupDate && <span>Follow-up: {o.followupDate}</span>}
+                            {o.threadCount > 0 && <span>{o.threadCount} thread{o.threadCount !== 1 ? "s" : ""}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4 shrink-0">
+                          {/* Quick status moves */}
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {moves.map((m) => (
+                              <button
+                                key={m.value}
+                                onClick={() => changeStatus(o.id, m.value)}
+                                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-medium text-white transition-colors ${m.color}`}
+                                title={m.label}
+                              >
+                                {m.label}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => openEdit(o)} className="w-7 h-7 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-purple-50 hover:border-purple-200 hover:text-[#7832E6] text-gray-400 transition-all" title="Edit">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                            </button>
+                            <button onClick={() => handleDelete(o.id)} className="w-7 h-7 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-rose-50 hover:border-rose-200 hover:text-rose-500 text-gray-400 transition-all" title="Delete">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
+
+        {/* ===== SETTINGS VIEW ===== */}
+        {view === "settings" && (
+          <>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6">Settings</h1>
+            <div className="max-w-lg space-y-6">
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Targets</h2>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Daily Target</label>
+                    <input type="number" value={settings.dailyTarget} onChange={(e) => setSettingsState({ ...settings, dailyTarget: parseInt(e.target.value) || 5 })}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Weekly Target</label>
+                    <input type="number" value={settings.weeklyTarget} onChange={(e) => setSettingsState({ ...settings, weeklyTarget: parseInt(e.target.value) || 25 })}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" />
+                  </div>
+                  <button onClick={() => { saveSettings(settings); setSyncMessage("Settings saved"); setTimeout(() => setSyncMessage(""), 3000); }}
+                    className="px-5 py-2.5 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors">Save Settings</button>
+                </div>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Data</h2>
+                <div className="flex gap-3">
+                  <button onClick={handleExport} className="flex-1 px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-purple-300 transition-all">Export JSON</button>
+                  <label className="flex-1 px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-purple-300 transition-all cursor-pointer text-center">
                     Import JSON
                     <input type="file" accept=".json" onChange={handleImport} className="hidden" />
                   </label>
-                  <button onClick={() => { if (confirm("Clear all data?")) { persist([]); setShowSettings(false); } }} className="px-3 py-2.5 bg-rose-50 border border-rose-200 rounded-xl text-sm text-rose-500 hover:bg-rose-100 transition-all">Clear</button>
+                  <button onClick={() => { if (confirm("Clear all data?")) { persist([]); } }}
+                    className="px-4 py-2.5 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-500 hover:bg-rose-100 transition-all">Clear All</button>
                 </div>
               </div>
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Account</h2>
+                <p className="text-sm text-gray-500 mb-3">{session?.user?.email}</p>
+                <button onClick={() => signOut()} className="px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-rose-200 hover:text-rose-500 transition-all">Sign Out</button>
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* Add/Edit Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl border border-gray-200" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-gray-900 mb-5">{editId ? "Edit Outreach" : "Add Outreach"}</h2>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Company</label>
+                  <input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" placeholder="Fund / Company..." />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Contacts</label>
+                  <input value={form.contacts} onChange={(e) => setForm({ ...form, contacts: e.target.value })} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" placeholder="Names, comma-separated..." />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Stage</label>
+                <div className="flex flex-wrap gap-2">
+                  {["angel", "seed", "series-a", "series-b", "accelerator"].map((s) => (
+                    <button key={s} type="button" onClick={() => setForm({ ...form, stage: form.stage === s ? "" : s })}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${form.stage === s ? "bg-[#7832E6] text-white border-[#7832E6]" : "bg-white border-gray-200 text-gray-500 hover:border-purple-300 hover:text-[#7832E6]"}`}>{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Status</label>
+                <div className="flex flex-wrap gap-2">
+                  {["todo", "ongoing", "holdoff", "rejected"].map((s) => (
+                    <button key={s} type="button" onClick={() => setForm({ ...form, status: form.status === s ? "" : s })}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${form.status === s ? "bg-[#7832E6] text-white border-[#7832E6]" : "bg-white border-gray-200 text-gray-500 hover:border-purple-300 hover:text-[#7832E6]"}`}>{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Outreach Date</label>
+                  <input type="date" value={form.outreachDate} onChange={(e) => setForm({ ...form, outreachDate: e.target.value })} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Follow-up Date</label>
+                  <input type="date" value={form.followupDate} onChange={(e) => setForm({ ...form, followupDate: e.target.value })} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Notes</label>
+                <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm resize-y focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all" placeholder="Add notes, links..." />
+              </div>
               <div className="flex justify-end gap-2 pt-3">
-                <button onClick={() => setShowSettings(false)} className="px-5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50 transition-all">Cancel</button>
-                <button onClick={() => { saveSettings(settings); setShowSettings(false); }} className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-purple-500 text-white rounded-xl text-sm font-medium hover:from-violet-600 hover:to-purple-600 shadow-sm shadow-violet-200 transition-all">Save</button>
+                <button onClick={() => setShowModal(false)} className="px-5 py-2.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition-all">Cancel</button>
+                <button onClick={handleSave} className="px-5 py-2.5 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors">Save</button>
               </div>
             </div>
           </div>
@@ -937,43 +924,32 @@ export default function Dashboard() {
 
       {/* Bulk Add Modal */}
       {showBulkAdd && (
-        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowBulkAdd(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold text-slate-800 mb-1">Bulk Add Targets</h2>
-            <p className="text-xs text-slate-400 mb-4">Paste investor/accelerator names — one per line or comma-separated. They&apos;ll be added as &quot;ToDo&quot;.</p>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowBulkAdd(false)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-xl border border-gray-200" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Bulk Add Targets</h2>
+            <p className="text-xs text-gray-400 mb-4">Paste company/fund names — one per line or comma-separated.</p>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Priority</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Priority</label>
                 <div className="flex gap-2">
                   {(["high", "moderate", "low"] as const).map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setBulkPriority(p)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${bulkPriority === p ? (p === "high" ? "bg-rose-500 text-white border-rose-500" : p === "moderate" ? "bg-amber-500 text-white border-amber-500" : "bg-slate-500 text-white border-slate-500") : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}
-                    >
-                      {p}
-                    </button>
+                    <button key={p} onClick={() => setBulkPriority(p)}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${bulkPriority === p ? "bg-[#7832E6] text-white border-[#7832E6]" : "bg-white border-gray-200 text-gray-500 hover:border-purple-300"}`}>{p}</button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Names</label>
-                <textarea
-                  value={bulkText}
-                  onChange={(e) => setBulkText(e.target.value)}
-                  rows={8}
-                  placeholder={"Y Combinator\na16z\nSequoia Capital\n\nor: Y Combinator, a16z, Sequoia Capital"}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300 transition-all font-mono"
-                />
-                <div className="text-[11px] text-slate-400 mt-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">Names</label>
+                <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} rows={8}
+                  placeholder={"Y Combinator\na16z\nSequoia Capital"}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm resize-y focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition-all font-mono" />
+                <div className="text-[10px] text-gray-400 mt-1">
                   {bulkText.trim() ? `${bulkText.split(/[,\n]/).map((n) => n.trim()).filter((n) => n).length} names detected` : ""}
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <button onClick={() => setShowBulkAdd(false)} className="px-5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50 transition-all">Cancel</button>
-                <button onClick={handleBulkAdd} className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-purple-500 text-white rounded-xl text-sm font-medium hover:from-violet-600 hover:to-purple-600 shadow-sm shadow-violet-200 transition-all">
-                  Add All
-                </button>
+                <button onClick={() => setShowBulkAdd(false)} className="px-5 py-2.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition-all">Cancel</button>
+                <button onClick={handleBulkAdd} className="px-5 py-2.5 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors">Add All</button>
               </div>
             </div>
           </div>

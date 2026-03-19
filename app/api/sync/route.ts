@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { google } from "googleapis";
-import { Outreach, ClassifiedItem } from "@/lib/types";
+import { CompanyOutreach, ClassifiedItem } from "@/lib/types";
+
+// Labels that indicate non-personal mail — Gmail's own classifier is extremely accurate
+const SKIP_LABELS = new Set([
+  "CATEGORY_PROMOTIONS",
+  "CATEGORY_UPDATES",
+  "CATEGORY_SOCIAL",
+  "CATEGORY_FORUMS",
+  "SPAM",
+  "TRASH",
+]);
 
 function generateId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -10,6 +20,35 @@ function generateId() {
 
 function gmailLink(messageId: string) {
   return `https://mail.google.com/mail/u/0/#inbox/${messageId}`;
+}
+
+function shouldSkipByLabels(labels: string[]): boolean {
+  return labels.some((l) => SKIP_LABELS.has(l));
+}
+
+// Lightweight fallback — subject keyword check only (headers are unreliable via metadata format)
+function isNewsletterMsg(subject: string, snippet: string): boolean {
+  const subLower = subject.toLowerCase();
+  if (subLower.includes("newsletter") || subLower.includes("digest") || subLower.includes("weekly roundup") || subLower.includes("weekly update")) return true;
+  const ls = snippet.toLowerCase();
+  if (ls.includes("unsubscribe") || ls.includes("view in browser") || ls.includes("email preferences") || ls.includes("manage subscription")) return true;
+  return false;
+}
+
+export function normalizeCompanyKey(name: string): string {
+  return name
+    .toLowerCase()
+    .split(/[|,&]/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .sort()
+    .join("|");
+}
+
+function companyKeysOverlap(keyA: string, keyB: string): boolean {
+  const partsA = keyA.split("|").filter((p) => p.length >= 4);
+  const partsB = keyB.split("|").filter((p) => p.length >= 4);
+  return partsA.some((a) => partsB.some((b) => a.includes(b) || b.includes(a)));
 }
 
 async function classifyBatch(
@@ -59,7 +98,6 @@ ${JSON.stringify(items.map((i, idx) => ({ idx, subject: i.subject, snippet: i.sn
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content || "";
 
-  // Extract JSON from response
   let jsonStr = content;
   const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (jsonMatch) jsonStr = jsonMatch[1];
@@ -86,11 +124,9 @@ ${JSON.stringify(items.map((i, idx) => ({ idx, subject: i.subject, snippet: i.sn
 
   if (!Array.isArray(parsed)) parsed = [parsed];
 
-  // Only accept high confidence items
   return parsed
     .filter((item: ClassifiedItem & { index: number }) => {
       if (item.confidence < 0.75) return false;
-      // Kill anything DeepSeek itself describes as a newsletter
       const notesLower = (item.notes || "").toLowerCase();
       if (notesLower.includes("newsletter") || notesLower.includes("digest") || notesLower.includes("roundup") || notesLower.includes("weekly update") || notesLower.includes("portfolio update")) return false;
       return true;
@@ -129,7 +165,6 @@ async function fetchRecentEmails(accessToken: string) {
 
   const gmail = google.gmail({ version: "v1", auth });
 
-  // STEP 1: Find emails Sarthak SENT related to fundraising
   const sentQueries = [
     'newer_than:30d in:sent (pitch OR deck OR fundraise OR investment OR intro OR application)',
     'newer_than:30d in:sent (accelerator OR incubator OR "apply" OR "our startup")',
@@ -138,27 +173,6 @@ async function fetchRecentEmails(accessToken: string) {
   const sentThreadIds = new Set<string>();
   const allMessages: { subject: string; snippet: string; from: string; date: string; type: string; id: string }[] = [];
   const seenIds = new Set<string>();
-
-  // Helper: check if a message is a newsletter/mass email
-  function isNewsletterMsg(headers: { name?: string | null; value?: string | null }[], snippet: string, subject?: string): boolean {
-    // Subject contains newsletter keywords
-    const subLower = (subject || "").toLowerCase();
-    if (subLower.includes("newsletter") || subLower.includes("digest") || subLower.includes("weekly") || subLower.includes("roundup")) return true;
-    // List-Unsubscribe header = mailing list, always skip
-    if (headers.find((h) => h.name === "List-Unsubscribe")) return true;
-    // Precedence: bulk or list = mass email
-    const precedence = headers.find((h) => h.name === "Precedence")?.value?.toLowerCase() || "";
-    if (precedence === "bulk" || precedence === "list") return true;
-    // X-Mailer or via sendgrid/mailchimp/hubspot
-    const mailer = headers.find((h) => h.name === "X-Mailer")?.value?.toLowerCase() || "";
-    const receivedSpf = headers.map(h => (h.value || "").toLowerCase()).join(" ");
-    if (mailer.includes("mailchimp") || mailer.includes("hubspot") || mailer.includes("sendgrid")) return true;
-    if (receivedSpf.includes("sendgrid") || receivedSpf.includes("mailchimp") || receivedSpf.includes("hubspot") || receivedSpf.includes("mailgun")) return true;
-    // Snippet checks
-    const ls = snippet.toLowerCase();
-    if (ls.includes("unsubscribe") || ls.includes("view in browser") || ls.includes("email preferences") || ls.includes("manage subscription")) return true;
-    return false;
-  }
 
   // STEP 1: Collect thread IDs from sent emails
   for (const q of sentQueries) {
@@ -170,16 +184,22 @@ async function fetchRecentEmails(accessToken: string) {
 
         const full = await gmail.users.messages.get({
           userId: "me", id: msg.id!, format: "metadata",
-          metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe", "Precedence", "X-Mailer"],
+          metadataHeaders: ["Subject", "From", "To", "Date"],
         });
 
         const headers = full.data.payload?.headers || [];
-        if (isNewsletterMsg(headers, full.data.snippet || "", headers.find((h) => h.name === "Subject")?.value || "")) continue;
+        const labels = full.data.labelIds || [];
+        const subject = headers.find((h) => h.name === "Subject")?.value || "";
+
+        // Label-based filter — single biggest fix
+        if (shouldSkipByLabels(labels)) continue;
+        // Lightweight fallback
+        if (isNewsletterMsg(subject, full.data.snippet || "")) continue;
 
         sentThreadIds.add(full.data.threadId!);
 
         allMessages.push({
-          subject: headers.find((h) => h.name === "Subject")?.value || "",
+          subject,
           snippet: full.data.snippet || "",
           from: `From: ${headers.find((h) => h.name === "From")?.value || ""} | To: ${headers.find((h) => h.name === "To")?.value || ""}`,
           date: headers.find((h) => h.name === "Date")?.value || "",
@@ -197,7 +217,7 @@ async function fetchRecentEmails(accessToken: string) {
     try {
       const thread = await gmail.users.threads.get({
         userId: "me", id: threadId, format: "metadata",
-        metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe", "Precedence", "X-Mailer"],
+        metadataHeaders: ["Subject", "From", "To", "Date"],
       });
 
       for (const msg of thread.data.messages || []) {
@@ -205,13 +225,16 @@ async function fetchRecentEmails(accessToken: string) {
         seenIds.add(msg.id!);
 
         const headers = msg.payload?.headers || [];
+        const labels = msg.labelIds || [];
         const from = headers.find((h) => h.name === "From")?.value || "";
+        const subject = headers.find((h) => h.name === "Subject")?.value || "";
 
         if (from.toLowerCase().includes("sarthak") || from.toLowerCase().includes("influencergarage")) continue;
-        if (isNewsletterMsg(headers, msg.snippet || "", headers.find((h) => h.name === "Subject")?.value || "")) continue;
+        if (shouldSkipByLabels(labels)) continue;
+        if (isNewsletterMsg(subject, msg.snippet || "")) continue;
 
         allMessages.push({
-          subject: headers.find((h) => h.name === "Subject")?.value || "",
+          subject,
           snippet: msg.snippet || "",
           from: `From: ${from} | To: ${headers.find((h) => h.name === "To")?.value || ""}`,
           date: headers.find((h) => h.name === "Date")?.value || "",
@@ -239,14 +262,18 @@ async function fetchRecentEmails(accessToken: string) {
 
         const full = await gmail.users.messages.get({
           userId: "me", id: msg.id!, format: "metadata",
-          metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe", "Precedence", "X-Mailer"],
+          metadataHeaders: ["Subject", "From", "To", "Date"],
         });
 
         const headers = full.data.payload?.headers || [];
-        if (isNewsletterMsg(headers, full.data.snippet || "", headers.find((h) => h.name === "Subject")?.value || "")) continue;
+        const labels = full.data.labelIds || [];
+        const subject = headers.find((h) => h.name === "Subject")?.value || "";
+
+        if (shouldSkipByLabels(labels)) continue;
+        if (isNewsletterMsg(subject, full.data.snippet || "")) continue;
 
         allMessages.push({
-          subject: headers.find((h) => h.name === "Subject")?.value || "",
+          subject,
           snippet: full.data.snippet || "",
           from: `From: ${headers.find((h) => h.name === "From")?.value || ""} | To: ${headers.find((h) => h.name === "To")?.value || ""}`,
           date: headers.find((h) => h.name === "Date")?.value || "",
@@ -296,6 +323,85 @@ async function fetchRecentCalendarEvents(accessToken: string) {
   }
 }
 
+// Group classified items by company on the server
+function groupByCompany(
+  classified: (ClassifiedItem & { sourceId: string })[],
+  newItems: { subject: string; snippet: string; from: string; date: string; type: string; id: string }[]
+): CompanyOutreach[] {
+  const today = new Date().toISOString().split("T")[0];
+  const groups = new Map<string, CompanyOutreach>();
+
+  for (const item of classified) {
+    const sourceItem = newItems.find((n) => n.id === item.sourceId);
+    const itemDate = sourceItem?.date ? new Date(sourceItem.date).toISOString().split("T")[0] : today;
+    const isEmail = sourceItem?.type === "email";
+
+    const companyName = item.company || item.investor || "Unknown";
+    const contactName = item.investor || "Unknown";
+    const key = normalizeCompanyKey(companyName);
+
+    // Check if this matches an existing group
+    let matchKey: string | null = null;
+    for (const [existingKey] of groups) {
+      if (existingKey === key || companyKeysOverlap(existingKey, key)) {
+        matchKey = existingKey;
+        break;
+      }
+    }
+
+    let status = "ongoing";
+    if (item.type === "rejection" as string) status = "rejected";
+
+    let stage = "seed";
+    if (Array.isArray(item.stage) && item.stage.length > 0) stage = item.stage[0];
+    else if (typeof item.stage === "string") stage = item.stage;
+
+    const source = item.type === "investor_meeting" as string ? "calendar"
+      : item.type === "form_submission" as string ? "accelerator"
+      : "email";
+
+    if (matchKey) {
+      const group = groups.get(matchKey)!;
+      // Add contact if not already present
+      if (!group.contacts.some((c) => c.name.toLowerCase() === contactName.toLowerCase())) {
+        group.contacts.push({ name: contactName });
+      }
+      group.threadCount++;
+      if (!group.sources.includes(source)) group.sources.push(source);
+      group.sourceIds.push(item.sourceId);
+      if (isEmail) group.emailLinks.push(gmailLink(item.sourceId));
+      if (item.notes && !group.notes.includes(item.notes)) {
+        group.notes = group.notes ? `${group.notes} | ${item.notes}` : item.notes;
+      }
+      // Merge company name parts
+      if (companyName && !group.company.toLowerCase().includes(companyName.toLowerCase())) {
+        group.company = `${group.company} | ${companyName}`;
+        group.companyKey = normalizeCompanyKey(group.company);
+      }
+      if (status === "rejected") group.status = "rejected";
+    } else {
+      groups.set(key, {
+        id: generateId(),
+        company: companyName,
+        companyKey: key,
+        contacts: [{ name: contactName }],
+        stage,
+        status,
+        sources: [source],
+        sourceIds: [item.sourceId],
+        emailLinks: isEmail ? [gmailLink(item.sourceId)] : [],
+        threadCount: 1,
+        notes: item.notes || "",
+        outreachDate: itemDate,
+        followupDate: "",
+        dateAdded: today,
+      });
+    }
+  }
+
+  return [...groups.values()];
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) {
@@ -317,55 +423,20 @@ export async function POST(req: NextRequest) {
       fetchRecentCalendarEvents(accessToken),
     ]);
 
-    // Filter out already-tracked items
     const newItems = [...emails, ...calendarEvents].filter((item) => !existingSourceIdSet.has(item.id));
 
     if (newItems.length === 0) {
       return NextResponse.json({ newOutreaches: [], updatedCount: 0, errors: [], totalScanned: 0 });
     }
 
-    // Classify with DeepSeek
     const classified = await classifyWithDeepSeek(newItems);
 
-    // Convert to outreach entries
-    const today = new Date().toISOString().split("T")[0];
-    const newOutreaches: Outreach[] = classified.map((item) => {
-      const sourceItem = newItems.find((n) => n.id === item.sourceId);
-      const itemDate = sourceItem?.date ? new Date(sourceItem.date).toISOString().split("T")[0] : today;
-      const isEmail = sourceItem?.type === "email";
-
-      // Map classification type to source and status
-      let source: Outreach["source"] = "email";
-      let status: string[] = ["ongoing"];
-      if (item.type === "investor_meeting" as string) source = "calendar";
-      else if (item.type === "form_submission" as string) source = "accelerator";
-      if (item.type === "rejection" as string) status = ["rejected"];
-
-      // Normalize stage
-      let stage = item.stage || [];
-      if (typeof stage === "string") stage = [stage];
-      if (!Array.isArray(stage)) stage = [];
-
-      return {
-        id: generateId(),
-        investor: item.investor || "Unknown",
-        company: item.company || "",
-        stage,
-        contactMethod: isEmail ? ["email"] : ["other"],
-        status,
-        outreachDate: itemDate,
-        followupDate: "",
-        notes: item.notes || "",
-        dateAdded: today,
-        source,
-        sourceId: item.sourceId,
-        emailLink: isEmail ? gmailLink(item.sourceId) : undefined,
-      };
-    });
+    // Group by company on the server before returning
+    const grouped = groupByCompany(classified, newItems);
 
     return NextResponse.json({
-      newOutreaches,
-      updatedCount: newOutreaches.length,
+      newOutreaches: grouped,
+      updatedCount: grouped.length,
       errors: [],
       totalScanned: newItems.length,
     });
