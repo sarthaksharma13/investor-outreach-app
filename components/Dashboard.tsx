@@ -317,16 +317,35 @@ export default function Dashboard() {
             contactMethod: Array.isArray(rawO.contactMethod) ? rawO.contactMethod : typeof rawO.contactMethod === "string" ? [rawO.contactMethod] : [],
           };
 
-          // Match by company name first (club all people from same company), then by investor name
+          // Skip entries where the "investor" is actually the founder
+          const selfNames = ["sarthak", "sarthak sharma"];
+          if (selfNames.includes(newO.investor.toLowerCase().trim())) {
+            // Still useful — try to merge by company
+            if (!newO.company) continue;
+            newO.investor = newO.company;
+          }
+
+          // Match by company or investor — split on | , & to match sub-parts
           const investorLower = newO.investor.toLowerCase().trim();
           const companyLower = newO.company.toLowerCase().trim();
+          const companyParts = companyLower.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
+          const investorParts = investorLower.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
+
           const existing = updated.find((o) => {
             const oCo = o.company.toLowerCase().trim();
             const oInv = o.investor.toLowerCase().trim();
-            // Same company (non-empty) → club together
-            if (companyLower && oCo && (oCo === companyLower || oCo.includes(companyLower) || companyLower.includes(oCo))) return true;
-            // Same investor name
-            if (investorLower && oInv && (oInv === investorLower || oInv.includes(investorLower) || investorLower.includes(oInv))) return true;
+            const oCoParts = oCo.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
+            const oInvParts = oInv.split(/[|,&]/).map((p) => p.trim()).filter((p) => p.length > 2);
+
+            // Any company sub-part matches any existing company sub-part
+            if (companyParts.some((cp) => oCoParts.some((op) => op.includes(cp) || cp.includes(op)))) return true;
+            // Full company match
+            if (companyLower && oCo && (oCo.includes(companyLower) || companyLower.includes(oCo))) return true;
+            // Investor name match (exact or contains)
+            if (investorLower && oInv && oInv.length > 3 && investorLower.length > 3 && (oInv.includes(investorLower) || investorLower.includes(oInv))) return true;
+            // Cross-check: investor parts against company parts
+            if (investorParts.some((ip) => oCoParts.some((op) => op.includes(ip) || ip.includes(op)))) return true;
+            if (companyParts.some((cp) => oInvParts.some((op) => op.includes(cp) || cp.includes(op)))) return true;
             return false;
           });
 
