@@ -133,7 +133,25 @@ async function fetchRecentEmails(accessToken: string) {
   const allMessages: { subject: string; snippet: string; from: string; date: string; type: string; id: string }[] = [];
   const seenIds = new Set<string>();
 
-  // Collect thread IDs from sent emails
+  // Helper: check if a message is a newsletter/mass email
+  function isNewsletterMsg(headers: { name?: string | null; value?: string | null }[], snippet: string): boolean {
+    // List-Unsubscribe header = mailing list, always skip
+    if (headers.find((h) => h.name === "List-Unsubscribe")) return true;
+    // Precedence: bulk or list = mass email
+    const precedence = headers.find((h) => h.name === "Precedence")?.value?.toLowerCase() || "";
+    if (precedence === "bulk" || precedence === "list") return true;
+    // X-Mailer or via sendgrid/mailchimp/hubspot
+    const mailer = headers.find((h) => h.name === "X-Mailer")?.value?.toLowerCase() || "";
+    const receivedSpf = headers.map(h => (h.value || "").toLowerCase()).join(" ");
+    if (mailer.includes("mailchimp") || mailer.includes("hubspot") || mailer.includes("sendgrid")) return true;
+    if (receivedSpf.includes("sendgrid") || receivedSpf.includes("mailchimp") || receivedSpf.includes("hubspot") || receivedSpf.includes("mailgun")) return true;
+    // Snippet checks
+    const ls = snippet.toLowerCase();
+    if (ls.includes("unsubscribe") || ls.includes("view in browser") || ls.includes("email preferences") || ls.includes("manage subscription")) return true;
+    return false;
+  }
+
+  // STEP 1: Collect thread IDs from sent emails
   for (const q of sentQueries) {
     try {
       const list = await gmail.users.messages.list({ userId: "me", q, maxResults: 40 });
@@ -143,12 +161,14 @@ async function fetchRecentEmails(accessToken: string) {
 
         const full = await gmail.users.messages.get({
           userId: "me", id: msg.id!, format: "metadata",
-          metadataHeaders: ["Subject", "From", "To", "Date"],
+          metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe", "Precedence", "X-Mailer"],
         });
+
+        const headers = full.data.payload?.headers || [];
+        if (isNewsletterMsg(headers, full.data.snippet || "")) continue;
 
         sentThreadIds.add(full.data.threadId!);
 
-        const headers = full.data.payload?.headers || [];
         allMessages.push({
           subject: headers.find((h) => h.name === "Subject")?.value || "",
           snippet: full.data.snippet || "",
@@ -163,12 +183,12 @@ async function fetchRecentEmails(accessToken: string) {
     }
   }
 
-  // STEP 2: Find replies in those threads (responses from investors)
+  // STEP 2: Find replies in those threads
   for (const threadId of sentThreadIds) {
     try {
       const thread = await gmail.users.threads.get({
         userId: "me", id: threadId, format: "metadata",
-        metadataHeaders: ["Subject", "From", "To", "Date"],
+        metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe", "Precedence", "X-Mailer"],
       });
 
       for (const msg of thread.data.messages || []) {
@@ -178,8 +198,8 @@ async function fetchRecentEmails(accessToken: string) {
         const headers = msg.payload?.headers || [];
         const from = headers.find((h) => h.name === "From")?.value || "";
 
-        // Skip our own messages (already captured above)
         if (from.toLowerCase().includes("sarthak") || from.toLowerCase().includes("influencergarage")) continue;
+        if (isNewsletterMsg(headers, msg.snippet || "")) continue;
 
         allMessages.push({
           subject: headers.find((h) => h.name === "Subject")?.value || "",
@@ -195,7 +215,7 @@ async function fetchRecentEmails(accessToken: string) {
     }
   }
 
-  // STEP 3: Personal accelerator confirmations & rejections (not from threads we initiated)
+  // STEP 3: Personal confirmations & rejections
   const directQueries = [
     'newer_than:30d -category:promotions -category:social to:me (subject:("your application" OR "we received your" OR "thank you for applying") -subject:re:)',
     'newer_than:30d -category:promotions -category:social to:me (subject:("not selected" OR "not moving forward" OR "passing on" OR "decided not to") -subject:re:)',
@@ -210,13 +230,11 @@ async function fetchRecentEmails(accessToken: string) {
 
         const full = await gmail.users.messages.get({
           userId: "me", id: msg.id!, format: "metadata",
-          metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe"],
+          metadataHeaders: ["Subject", "From", "To", "Date", "List-Unsubscribe", "Precedence", "X-Mailer"],
         });
 
         const headers = full.data.payload?.headers || [];
-
-        // Hard skip if List-Unsubscribe header exists — it's a mailing list
-        if (headers.find((h) => h.name === "List-Unsubscribe")) continue;
+        if (isNewsletterMsg(headers, full.data.snippet || "")) continue;
 
         allMessages.push({
           subject: headers.find((h) => h.name === "Subject")?.value || "",
