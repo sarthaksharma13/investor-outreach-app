@@ -317,20 +317,25 @@ export default function Dashboard() {
             contactMethod: Array.isArray(rawO.contactMethod) ? rawO.contactMethod : typeof rawO.contactMethod === "string" ? [rawO.contactMethod] : [],
           };
 
-          // Match by investor name OR company name (fuzzy — case insensitive, partial match)
-          const investorLower = newO.investor.toLowerCase();
-          const companyLower = newO.company.toLowerCase();
+          // Match by company name first (club all people from same company), then by investor name
+          const investorLower = newO.investor.toLowerCase().trim();
+          const companyLower = newO.company.toLowerCase().trim();
           const existing = updated.find((o) => {
-            const oInv = o.investor.toLowerCase();
-            const oCo = o.company.toLowerCase();
-            return (
-              (investorLower && oInv && (oInv.includes(investorLower) || investorLower.includes(oInv))) ||
-              (companyLower && oCo && (oCo.includes(companyLower) || companyLower.includes(oCo)))
-            );
+            const oCo = o.company.toLowerCase().trim();
+            const oInv = o.investor.toLowerCase().trim();
+            // Same company (non-empty) → club together
+            if (companyLower && oCo && (oCo === companyLower || oCo.includes(companyLower) || companyLower.includes(oCo))) return true;
+            // Same investor name
+            if (investorLower && oInv && (oInv === investorLower || oInv.includes(investorLower) || investorLower.includes(oInv))) return true;
+            return false;
           });
 
           if (existing) {
             existing.threadCount = (existing.threadCount || 1) + 1;
+            // If the existing entry has a generic name (same as company), update to the real person
+            if (existing.investor === existing.company && newO.investor !== newO.company) {
+              existing.investor = newO.investor;
+            }
             // Track all sources
             const srcSet = new Set(existing.sources || [existing.source]);
             srcSet.add(newO.source);

@@ -123,16 +123,17 @@ async function fetchRecentEmails(accessToken: string) {
 
   const gmail = google.gmail({ version: "v1", auth });
 
-  // Tighter queries — focus on actual fundraising activity, exclude promotions/newsletters
+  // Very tight queries — only direct 1-to-1 fundraising emails
+  // -unsubscribe filters out virtually all newsletters/marketing
   const queries = [
-    // Emails the founder sent related to fundraising
-    "newer_than:30d in:sent (pitch deck OR investment OR fundraise OR funding round)",
-    // Direct replies from investors/accelerators (not newsletters)
-    "newer_than:30d -category:promotions -category:social (subject:re: (investor OR pitch OR deck OR funding OR application))",
-    // Accelerator form confirmations
-    "newer_than:30d -category:promotions (subject:(application received OR thank you for applying OR submission confirmed OR application submitted))",
-    // Rejection emails
-    "newer_than:30d -category:promotions (subject:(not selected OR passing OR unfortunately OR not a fit OR not moving forward))",
+    // Emails Sarthak SENT to investors
+    'newer_than:30d in:sent (subject:(pitch deck) OR subject:(fundraise) OR subject:(intro) OR subject:(investment))',
+    // Direct replies in threads (has Re:, no unsubscribe, no promos)
+    'newer_than:30d subject:re: -category:promotions -category:social -unsubscribe -"view in browser" -"email preferences"',
+    // Specific accelerator confirmations (personal, not blasts)
+    'newer_than:30d -category:promotions -unsubscribe (subject:("your application" OR "we received your" OR "thank you for applying" OR "application confirmed"))',
+    // Rejections addressed personally
+    'newer_than:30d -category:promotions -unsubscribe (subject:("not selected" OR "not moving forward" OR "passing on" OR "decided not to"))',
   ];
 
   const allMessages: { subject: string; snippet: string; from: string; date: string; type: string; id: string }[] = [];
@@ -163,9 +164,25 @@ async function fetchRecentEmails(accessToken: string) {
         const to = headers.find((h) => h.name === "To")?.value || "";
         const date = headers.find((h) => h.name === "Date")?.value || "";
 
+        // Skip newsletters — check snippet for telltale signs
+        const snippet = full.data.snippet || "";
+        const lowerSnippet = snippet.toLowerCase();
+        const lowerSubject = subject.toLowerCase();
+        const isNewsletter =
+          lowerSnippet.includes("unsubscribe") ||
+          lowerSnippet.includes("view in browser") ||
+          lowerSnippet.includes("email preferences") ||
+          lowerSnippet.includes("manage your subscription") ||
+          lowerSnippet.includes("you are receiving this") ||
+          lowerSubject.includes("newsletter") ||
+          lowerSubject.includes("digest") ||
+          lowerSubject.includes("weekly roundup");
+
+        if (isNewsletter) continue;
+
         allMessages.push({
           subject,
-          snippet: full.data.snippet || "",
+          snippet,
           from: `From: ${from} | To: ${to}`,
           date,
           type: "email",
