@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Investor Outreach Tracker
 
-## Getting Started
+A personal dashboard for tracking investor outreach, accelerator applications, and fundraising conversations — auto-synced from Gmail and Google Calendar.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Auto-sync from Gmail & Calendar** — Scans your inbox and calendar for investor conversations, form submissions, rejections, and ongoing threads. Uses DeepSeek AI to classify items with high precision.
+- **Thread clubbing** — Multiple conversations with the same investor are merged into one entry with a thread count and individual email links.
+- **Bulk add targets** — Paste a list of investor/accelerator names (comma or newline separated) and they get added as ToDo entries with priority levels.
+- **Smart classification** — Only captures: outreach you sent, form submission confirmations, rejections, and ongoing 1-to-1 conversations. Aggressively filters newsletters, announcements, and marketing.
+- **Source tracking** — Each entry shows source icons (✏️ Manual, 📧 Email, 📅 Calendar, 📋 Form). Clubbed entries show all source types.
+- **Priority tiers** — High, moderate, low priority tags for target investors.
+- **Direct Gmail links** — Click to open the original email thread in Gmail.
+- **Daily/weekly targets** — Track outreach goals with a 30-day bar chart.
+- **Follow-up reminders** — Overdue and upcoming follow-ups highlighted.
+- **Export/Import** — Backup and restore data as JSON.
+- **Auto-sync every 24 hours** — Runs automatically on page load if last sync was >24h ago.
+
+## Tech Stack
+
+- **Next.js 16** (App Router, TypeScript, Tailwind CSS v4)
+- **NextAuth v4** (Google OAuth with Gmail + Calendar scopes)
+- **Google APIs** (Gmail API, Calendar API)
+- **DeepSeek API** (AI classification of emails/events)
+- **Vercel** (hosting, free tier)
+- **localStorage** (client-side data persistence)
+
+## Setup
+
+### 1. Google Cloud Project
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a project (or use existing)
+3. Enable **Gmail API** and **Google Calendar API**
+4. Set up OAuth consent screen (Internal for Google Workspace)
+5. Go to **Data access** → add scopes:
+   - `https://www.googleapis.com/auth/gmail.readonly`
+   - `https://www.googleapis.com/auth/calendar.readonly`
+6. Create **OAuth Client ID** (Web Application):
+   - Authorized JavaScript origins: `http://localhost:3000`
+   - Authorized redirect URIs: `http://localhost:3000/api/auth/callback/google`
+
+### 2. Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in:
+
+```
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-client-secret
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=<run: openssl rand -base64 32>
+DEEPSEEK_API_KEY=your-deepseek-key
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Run Locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open http://localhost:3000 and sign in with your Google Workspace account.
 
-## Learn More
+### 4. Deploy to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx vercel
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Add the same env vars in Vercel dashboard → Settings → Environment Variables. Then add `https://your-app.vercel.app/api/auth/callback/google` to your Google OAuth redirect URIs.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Data Model
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Each outreach entry tracks:
+- Investor name & company
+- Stage (angel, seed, series-a, accelerator)
+- Status (todo, ongoing, holdoff, rejected)
+- Source(s) (manual, email, calendar, form)
+- Priority (high, moderate, low)
+- Thread count & email links
+- Outreach date, follow-up date, notes
