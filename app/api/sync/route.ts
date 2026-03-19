@@ -88,7 +88,13 @@ ${JSON.stringify(items.map((i, idx) => ({ idx, subject: i.subject, snippet: i.sn
 
   // Only accept high confidence items
   return parsed
-    .filter((item: ClassifiedItem & { index: number }) => item.confidence >= 0.75)
+    .filter((item: ClassifiedItem & { index: number }) => {
+      if (item.confidence < 0.75) return false;
+      // Kill anything DeepSeek itself describes as a newsletter
+      const notesLower = (item.notes || "").toLowerCase();
+      if (notesLower.includes("newsletter") || notesLower.includes("digest") || notesLower.includes("roundup") || notesLower.includes("weekly update") || notesLower.includes("portfolio update")) return false;
+      return true;
+    })
     .map((item: ClassifiedItem & { index: number }) => ({
       ...item,
       sourceId: items[item.index]?.id || "",
@@ -134,7 +140,10 @@ async function fetchRecentEmails(accessToken: string) {
   const seenIds = new Set<string>();
 
   // Helper: check if a message is a newsletter/mass email
-  function isNewsletterMsg(headers: { name?: string | null; value?: string | null }[], snippet: string): boolean {
+  function isNewsletterMsg(headers: { name?: string | null; value?: string | null }[], snippet: string, subject?: string): boolean {
+    // Subject contains newsletter keywords
+    const subLower = (subject || "").toLowerCase();
+    if (subLower.includes("newsletter") || subLower.includes("digest") || subLower.includes("weekly") || subLower.includes("roundup")) return true;
     // List-Unsubscribe header = mailing list, always skip
     if (headers.find((h) => h.name === "List-Unsubscribe")) return true;
     // Precedence: bulk or list = mass email
@@ -165,7 +174,7 @@ async function fetchRecentEmails(accessToken: string) {
         });
 
         const headers = full.data.payload?.headers || [];
-        if (isNewsletterMsg(headers, full.data.snippet || "")) continue;
+        if (isNewsletterMsg(headers, full.data.snippet || "", headers.find((h) => h.name === "Subject")?.value || "")) continue;
 
         sentThreadIds.add(full.data.threadId!);
 
@@ -199,7 +208,7 @@ async function fetchRecentEmails(accessToken: string) {
         const from = headers.find((h) => h.name === "From")?.value || "";
 
         if (from.toLowerCase().includes("sarthak") || from.toLowerCase().includes("influencergarage")) continue;
-        if (isNewsletterMsg(headers, msg.snippet || "")) continue;
+        if (isNewsletterMsg(headers, msg.snippet || "", headers.find((h) => h.name === "Subject")?.value || "")) continue;
 
         allMessages.push({
           subject: headers.find((h) => h.name === "Subject")?.value || "",
@@ -234,7 +243,7 @@ async function fetchRecentEmails(accessToken: string) {
         });
 
         const headers = full.data.payload?.headers || [];
-        if (isNewsletterMsg(headers, full.data.snippet || "")) continue;
+        if (isNewsletterMsg(headers, full.data.snippet || "", headers.find((h) => h.name === "Subject")?.value || "")) continue;
 
         allMessages.push({
           subject: headers.find((h) => h.name === "Subject")?.value || "",
