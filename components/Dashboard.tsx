@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { CompanyOutreach, Settings } from "@/lib/types";
+import { supabase } from "@/lib/supabase";
 
-const STORAGE_KEY = "outreach-tracker-v3";
 const SETTINGS_KEY = "outreach-settings-v2";
 const LAST_SYNC_KEY = "outreach-last-sync";
 const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -83,26 +83,29 @@ function migrateV2ToV3(old: OldOutreach[]): CompanyOutreach[] {
   }));
 }
 
-function loadOutreaches(): CompanyOutreach[] {
-  if (typeof window === "undefined") return [];
-  const v3Data = localStorage.getItem(STORAGE_KEY);
-  if (v3Data) return JSON.parse(v3Data);
-  const v2Data = localStorage.getItem("outreach-tracker-v2");
-  if (v2Data) {
-    try {
-      const old = JSON.parse(v2Data);
-      if (Array.isArray(old) && old.length > 0 && "investor" in old[0]) {
-        const migrated = migrateV2ToV3(old);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-        return migrated;
-      }
-    } catch { /* ignore */ }
-  }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_DATA));
-  return SEED_DATA;
+// Supabase row → CompanyOutreach
+function rowToOutreach(r: Record<string, unknown>): CompanyOutreach {
+  return {
+    id: r.id as string, company: r.company as string, companyKey: r.company_key as string,
+    contacts: (r.contacts || []) as CompanyOutreach["contacts"],
+    stage: (r.stage || "seed") as string, status: (r.status || "todo") as string,
+    sources: (r.sources || ["manual"]) as string[], sourceIds: (r.source_ids || []) as string[],
+    emailLinks: (r.email_links || []) as string[], threadCount: (r.thread_count || 0) as number,
+    priority: r.priority as CompanyOutreach["priority"], notes: (r.notes || "") as string,
+    outreachDate: (r.outreach_date || "") as string, followupDate: (r.followup_date || "") as string,
+    dateAdded: (r.date_added || "") as string,
+  };
 }
 
-function saveOutreaches(o: CompanyOutreach[]) { localStorage.setItem(STORAGE_KEY, JSON.stringify(o)); }
+// CompanyOutreach → Supabase row
+function outreachToRow(o: CompanyOutreach) {
+  return {
+    id: o.id, company: o.company, company_key: o.companyKey, contacts: o.contacts,
+    stage: o.stage, status: o.status, sources: o.sources, source_ids: o.sourceIds,
+    email_links: o.emailLinks, thread_count: o.threadCount, priority: o.priority || null,
+    notes: o.notes, outreach_date: o.outreachDate, followup_date: o.followupDate, date_added: o.dateAdded,
+  };
+}
 function loadSettings(): Settings {
   if (typeof window === "undefined") return { dailyTarget: 5, weeklyTarget: 25 };
   const d = localStorage.getItem(SETTINGS_KEY);
@@ -146,7 +149,7 @@ interface QuickNote {
   createdAt: string;
 }
 
-const NOTES_KEY = "outreach-quicknotes";
+// Notes and outreaches stored in Supabase
 
 export default function Dashboard() {
   const router = useRouter();
@@ -176,12 +179,25 @@ export default function Dashboard() {
   const [noteInput, setNoteInput] = useState("");
 
   useEffect(() => {
-    setOutreaches(loadOutreaches());
+    // Load outreaches from Supabase
+    async function loadData() {
+      const { data: rows } = await supabase.from("outreaches").select("*").order("created_at", { ascending: false });
+      if (rows && rows.length > 0) {
+        setOutreaches(rows.map(rowToOutreach));
+      } else {
+        // Seed data on first load
+        const seedRows = SEED_DATA.map(outreachToRow);
+        await supabase.from("outreaches").upsert(seedRows);
+        setOutreaches(SEED_DATA);
+      }
+      // Load notes
+      const { data: notes } = await supabase.from("quick_notes").select("*").order("created_at", { ascending: false });
+      if (notes) setQuickNotes(notes.map((n) => ({ id: n.id, text: n.text, createdAt: n.created_at })));
+    }
+    loadData();
     setSettingsState(loadSettings());
     const ls = localStorage.getItem(LAST_SYNC_KEY);
     if (ls) setLastSynced(new Date(parseInt(ls)).toLocaleString());
-    const saved = localStorage.getItem(NOTES_KEY);
-    if (saved) setQuickNotes(JSON.parse(saved));
   }, []);
 
   const handleSyncRef = useCallback(async () => {
@@ -203,9 +219,18 @@ export default function Dashboard() {
     return () => clearTimeout(timer);
   }, [handleSyncRef]);
 
-  const persist = useCallback((updated: CompanyOutreach[]) => {
+  const persist = useCallback(async (updated: CompanyOutreach[]) => {
     setOutreaches(updated);
-    saveOutreaches(updated);
+    // Sync to Supabase: upsert all, delete removed
+    const rows = updated.map(outreachToRow);
+    await supabase.from("outreaches").upsert(rows);
+    // Delete any that were removed
+    const currentIds = updated.map((o) => o.id);
+    const { data: existing } = await supabase.from("outreaches").select("id");
+    if (existing) {
+      const toDelete = existing.filter((r) => !currentIds.includes(r.id)).map((r) => r.id);
+      if (toDelete.length > 0) await supabase.from("outreaches").delete().in("id", toDelete);
+    }
   }, []);
 
   const today = getToday();
@@ -381,19 +406,17 @@ export default function Dashboard() {
     persist(outreaches.map((o) => o.id === id ? { ...o, status: newStatus } : o));
   }
 
-  function addQuickNote() {
+  async function addQuickNote() {
     if (!noteInput.trim()) return;
     const note: QuickNote = { id: Math.random().toString(36).slice(2) + Date.now().toString(36), text: noteInput.trim(), createdAt: new Date().toISOString() };
-    const updated = [note, ...quickNotes];
-    setQuickNotes(updated);
-    localStorage.setItem(NOTES_KEY, JSON.stringify(updated));
+    setQuickNotes([note, ...quickNotes]);
     setNoteInput("");
+    await supabase.from("quick_notes").insert({ id: note.id, text: note.text });
   }
 
-  function deleteQuickNote(id: string) {
-    const updated = quickNotes.filter((n) => n.id !== id);
-    setQuickNotes(updated);
-    localStorage.setItem(NOTES_KEY, JSON.stringify(updated));
+  async function deleteQuickNote(id: string) {
+    setQuickNotes(quickNotes.filter((n) => n.id !== id));
+    await supabase.from("quick_notes").delete().eq("id", id);
   }
 
   // --- NAV ITEMS ---
