@@ -275,14 +275,16 @@ export default function Dashboard() {
   }
 
   function handleSave() {
-    if (!form.company.trim()) return;
     const contactsList = form.contacts.split(",").map((n) => n.trim()).filter((n) => n.length > 0).map((name) => ({ name }));
+    // Allow saving with just company OR just contacts
+    const company = form.company.trim() || (contactsList.length > 0 ? contactsList[0].name : "");
+    if (!company) return;
     if (editId) {
-      persist(outreaches.map((o) => o.id === editId ? { ...o, company: form.company, companyKey: normalizeCompanyKey(form.company), contacts: contactsList, stage: form.stage || "seed", status: form.status || "todo", outreachDate: form.outreachDate, followupDate: form.followupDate, notes: form.notes } : o));
+      persist(outreaches.map((o) => o.id === editId ? { ...o, company, companyKey: normalizeCompanyKey(company), contacts: contactsList, stage: form.stage || "seed", status: form.status || "todo", outreachDate: form.outreachDate, followupDate: form.followupDate, notes: form.notes } : o));
     } else {
       persist([...outreaches, {
-        id: Math.random().toString(36).slice(2) + Date.now().toString(36), company: form.company,
-        companyKey: normalizeCompanyKey(form.company), contacts: contactsList, stage: form.stage || "seed",
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36), company,
+        companyKey: normalizeCompanyKey(company), contacts: contactsList, stage: form.stage || "seed",
         status: form.status || "todo", sources: ["manual"], sourceIds: [], emailLinks: [], threadCount: 0,
         outreachDate: form.outreachDate, followupDate: form.followupDate, notes: form.notes, dateAdded: getToday(),
       }]);
