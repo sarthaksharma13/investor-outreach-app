@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useSession, signIn } from "next-auth/react";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { CompanyOutreach, Settings } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
@@ -122,6 +123,7 @@ const STAGE_COLORS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  review: "bg-purple-50 text-purple-600 border border-purple-200",
   todo: "bg-sky-50 text-sky-600 border border-sky-200",
   ongoing: "bg-emerald-50 text-emerald-600 border border-emerald-200",
   holdoff: "bg-orange-50 text-orange-600 border border-orange-200",
@@ -141,7 +143,7 @@ const SOURCE_ICONS: Record<string, { icon: string; label: string }> = {
   accelerator: { icon: "📋", label: "Form" },
 };
 
-type View = "dashboard" | "todo" | "followups" | "ongoing" | "holdoff" | "rejected" | "settings";
+type View = "dashboard" | "review" | "todo" | "followups" | "ongoing" | "holdoff" | "rejected" | "settings";
 
 interface QuickNote {
   id: string;
@@ -153,6 +155,7 @@ interface QuickNote {
 
 export default function Dashboard() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [outreaches, setOutreaches] = useState<CompanyOutreach[]>([]);
   const [settings, setSettingsState] = useState<Settings>({ dailyTarget: 5, weeklyTarget: 25 });
   const [search, setSearch] = useState("");
@@ -201,13 +204,14 @@ export default function Dashboard() {
   }, []);
 
   const handleSyncRef = useCallback(async () => {
-    if (syncing) return;
+    if (syncing || !session) return; // Only sync if Google is connected
     await handleSync();
     localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncing, outreaches]);
+  }, [syncing, outreaches, session]);
 
   useEffect(() => {
+    if (!session) return; // Don't auto-sync without Google
     const lastSync = parseInt(localStorage.getItem(LAST_SYNC_KEY) || "0");
     const timeSinceSync = Date.now() - lastSync;
     if (lastSync === 0 || timeSinceSync >= SYNC_INTERVAL_MS) {
@@ -217,7 +221,7 @@ export default function Dashboard() {
     const nextSyncIn = SYNC_INTERVAL_MS - timeSinceSync;
     const timer = setTimeout(() => handleSyncRef(), nextSyncIn);
     return () => clearTimeout(timer);
-  }, [handleSyncRef]);
+  }, [handleSyncRef, session]);
 
   const persist = useCallback(async (updated: CompanyOutreach[]) => {
     setOutreaches(updated);
@@ -421,6 +425,7 @@ export default function Dashboard() {
 
   // --- NAV ITEMS ---
   // Status counts
+  const reviewCount = outreaches.filter((o) => o.status === "review").length;
   const todoCount = outreaches.filter((o) => o.status === "todo").length;
   const ongoingCount = outreaches.filter((o) => o.status === "ongoing").length;
   const holdoffCount = outreaches.filter((o) => o.status === "holdoff").length;
@@ -430,6 +435,11 @@ export default function Dashboard() {
     {
       key: "dashboard", label: "Dashboard", section: "Overview",
       icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" /></svg>,
+    },
+    {
+      key: "review", label: "Review",
+      icon: <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+      badge: reviewCount || undefined,
     },
     {
       key: "todo", label: "To Do", section: "Pipeline",
@@ -517,15 +527,25 @@ export default function Dashboard() {
 
         {/* Bottom */}
         <div className="border-t border-gray-700 py-4 space-y-1 px-3">
-          {/* Sync button */}
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className={`w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-50`}
-          >
-            <svg className={`w-5 h-5 shrink-0 ${syncing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-            {!sidebarCollapsed && <span>{syncing ? "Syncing..." : "Sync"}</span>}
-          </button>
+          {/* Google connect / Sync */}
+          {session ? (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-50"
+            >
+              <svg className={`w-5 h-5 shrink-0 ${syncing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              {!sidebarCollapsed && <span>{syncing ? "Syncing..." : "Sync Email"}</span>}
+            </button>
+          ) : (
+            <button
+              onClick={() => signIn("google")}
+              className="w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors px-4 py-2.5 text-emerald-400 hover:bg-gray-700 hover:text-emerald-300"
+            >
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+              {!sidebarCollapsed && <span>Connect Google</span>}
+            </button>
+          )}
           {/* Collapse toggle (desktop) */}
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -569,9 +589,10 @@ export default function Dashboard() {
             </div>
 
             {/* Stats row */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
               {[
-                { label: "Total", value: outreaches.length, color: "text-[#7832E6]" },
+                { label: "Total", value: outreaches.filter((o) => o.status !== "review").length, color: "text-[#7832E6]" },
+                { label: "To Review", value: reviewCount, color: "text-purple-600" },
                 { label: "To Do", value: todoCount, color: "text-sky-600" },
                 { label: "Ongoing", value: ongoingCount, color: "text-emerald-600" },
                 { label: "Hold Off", value: holdoffCount, color: "text-orange-600" },
@@ -744,6 +765,129 @@ export default function Dashboard() {
             )}
           </>
         )}
+
+        {/* ===== REVIEW VIEW ===== */}
+        {view === "review" && (() => {
+          const reviewItems = outreaches.filter((o) => o.status === "review").sort((a, b) => b.dateAdded.localeCompare(a.dateAdded));
+          return (
+            <>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Review</h1>
+                  <p className="text-sm text-gray-500 mt-1">{reviewItems.length} items from email sync to review</p>
+                </div>
+                <div className="flex gap-2">
+                  {session ? (
+                    <button onClick={handleSync} disabled={syncing} className="px-4 py-2 bg-[#7832E6] text-white rounded-lg text-sm font-medium hover:bg-[#6526C7] transition-colors disabled:opacity-50">
+                      {syncing ? "Syncing..." : "Sync Now"}
+                    </button>
+                  ) : (
+                    <button onClick={() => signIn("google")} className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 transition-colors flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/></svg>
+                      Connect Google to Sync
+                    </button>
+                  )}
+                  {reviewItems.length > 0 && (
+                    <>
+                      <button
+                        onClick={() => { const ids = reviewItems.map((o) => o.id); persist(outreaches.map((o) => ids.includes(o.id) ? { ...o, status: "todo" } : o)); }}
+                        className="px-4 py-2 bg-sky-500 text-white rounded-lg text-sm font-medium hover:bg-sky-600 transition-colors"
+                      >
+                        Approve All → ToDo
+                      </button>
+                      <button
+                        onClick={() => { if (confirm("Dismiss all review items?")) persist(outreaches.filter((o) => o.status !== "review")); }}
+                        className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-500 hover:border-rose-200 hover:text-rose-500 transition-colors"
+                      >
+                        Dismiss All
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {!session && reviewItems.length === 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-10 text-center mb-6">
+                  <svg className="w-12 h-12 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                  <p className="font-medium text-gray-600 mb-1">Connect Google to sync emails</p>
+                  <p className="text-sm text-gray-400 mb-4">Synced items will appear here for you to review before adding to your pipeline</p>
+                  <button onClick={() => signIn("google")} className="px-5 py-2.5 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 transition-colors inline-flex items-center gap-2">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/></svg>
+                    Connect Google
+                  </button>
+                </div>
+              )}
+
+              {reviewItems.length === 0 && session && (
+                <div className="bg-white rounded-xl border border-gray-200 p-16 text-center">
+                  <div className="text-4xl mb-3">✅</div>
+                  <p className="font-medium text-gray-600 mb-1">All caught up</p>
+                  <p className="text-sm text-gray-400">No items to review. Click &quot;Sync Now&quot; to pull latest emails.</p>
+                </div>
+              )}
+
+              {reviewItems.length > 0 && (
+                <div className="space-y-3">
+                  {reviewItems.map((o) => (
+                    <div key={o.id} className="group bg-white rounded-xl border border-purple-200 p-5 transition-all hover:shadow-lg hover:border-purple-300">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-gray-900">{o.company}</span>
+                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${STAGE_COLORS[o.stage] || "bg-gray-50 text-gray-500 border border-gray-200"}`}>{o.stage}</span>
+                            {o.sources.map((s) => <span key={s} className="text-sm">{SOURCE_ICONS[s]?.icon || "✏️"}</span>)}
+                          </div>
+                          {o.contacts.length > 0 && (
+                            <div className="text-xs text-gray-500 mb-1">{o.contacts.map((c) => c.name).join(", ")}</div>
+                          )}
+                          {o.notes && <div className="text-sm text-gray-600">{o.notes}</div>}
+                          <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-400">
+                            {o.outreachDate && <span>Date: {o.outreachDate}</span>}
+                            {o.threadCount > 0 && <span>{o.threadCount} thread{o.threadCount !== 1 ? "s" : ""}</span>}
+                            {o.emailLinks.length > 0 && o.emailLinks.map((link, i) => (
+                              <a key={i} href={link} target="_blank" rel="noopener noreferrer" className="text-[#7832E6] hover:text-[#6526C7] font-medium inline-flex items-center gap-0.5">
+                                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                email {i + 1}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4 shrink-0">
+                          <button
+                            onClick={() => changeStatus(o.id, "todo")}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-sky-500 hover:bg-sky-600 transition-colors"
+                          >
+                            → ToDo
+                          </button>
+                          <button
+                            onClick={() => changeStatus(o.id, "ongoing")}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-500 hover:bg-emerald-600 transition-colors"
+                          >
+                            → Ongoing
+                          </button>
+                          <button
+                            onClick={() => openEdit(o)}
+                            className="w-8 h-8 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-purple-50 hover:border-purple-200 hover:text-[#7832E6] text-gray-400 transition-all"
+                            title="Edit before approving"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                          </button>
+                          <button
+                            onClick={() => handleDelete(o.id)}
+                            className="w-8 h-8 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-rose-50 hover:border-rose-200 hover:text-rose-500 text-gray-400 transition-all"
+                            title="Dismiss"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* ===== STATUS-FILTERED VIEWS (todo, ongoing, holdoff, rejected) ===== */}
         {(view === "todo" || view === "ongoing" || view === "holdoff" || view === "rejected") && (() => {

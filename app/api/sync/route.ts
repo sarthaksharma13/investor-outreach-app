@@ -349,8 +349,8 @@ function groupByCompany(
       }
     }
 
-    let status = "ongoing";
-    if (item.type === "rejection" as string) status = "rejected";
+    let status = "review";
+    if (item.type === "rejection" as string) status = "review";
 
     let stage = "seed";
     if (Array.isArray(item.stage) && item.stage.length > 0) stage = item.stage[0];
